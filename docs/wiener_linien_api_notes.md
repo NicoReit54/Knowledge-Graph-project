@@ -44,9 +44,35 @@ Maps cleanly onto the one-pager's "transport links" + "temporal (live) data":
 - Elevator outages relevant if POI proximity/routing needs to account for
   accessibility at interchange stations
 
+## Static reference data (data/raw/)
+
+Downloaded from data.wien.gv.at (semicolon-delimited CSV, no auth needed):
+
+- `wienerlinien-ogd-haltestellen.csv` (1,960 rows) — one row per named **stop**:
+  `HALTESTELLEN_ID`, `NAME`, `WGS84_LAT`/`WGS84_LON`, `DIVA` (groups platforms),
+  `GEMEINDE`
+- `wienerlinien-ogd-steige.csv` (7,363 rows) — one row per **platform/direction**,
+  this is where the **RBL number** actually lives (`RBL_NUMMER` — the ID the
+  `monitor` endpoint needs): `STEIG_ID`, `FK_HALTESTELLEN_ID`, `FK_LINIEN_ID`,
+  `RICHTUNG` (H/R), `RBL_NUMMER`, own `STEIG_WGS84_LAT`/`LON` (platform-level,
+  slightly more precise than the stop-level coords)
+- `wienerlinien-ogd-linien.csv` (198 rows) — one row per **line**: `LINIEN_ID`,
+  `BEZEICHNUNG` (line name, e.g. "U4", "13A"), `VERKEHRSMITTEL` (mode: ptTram,
+  ptBusCity, ptMetro, ptTrainS, ...), `ECHTZEIT` (realtime-supported flag)
+
+**Join path to build the KG's transport subgraph:**
+`steige.RBL_NUMMER` → used directly in `monitor?rbl=...` calls
+`steige.FK_HALTESTELLEN_ID` → `haltestellen.HALTESTELLEN_ID` (which stop this platform belongs to)
+`steige.FK_LINIEN_ID` → `linien.LINIEN_ID` (which line serves this platform)
+
+So a natural KG shape: `Stop` (from haltestellen) —hasPlatform→ `Platform` (from
+steige, carries RBL + direction) —servedBy→ `Line` (from linien, carries mode).
+Live departures/disruptions from the `monitor` API then attach to `Platform` via RBL.
+
 ## Open questions for KG Modelling week
 
-- Where to source the static RBL stop list (name ↔ RBL ↔ coordinates mapping) —
-  needed before `monitor` calls are useful.
 - Whether routing data (mentioned but not detailed in this doc) is GTFS-based —
   check data.gv.at listing.
+- `DIVA` on the stops file vs `RBL_NUMMER` on the platforms file: DIVA is a
+  higher-level stop-area grouping, RBL is what the realtime API actually keys on —
+  keep both, don't conflate them in the schema.
