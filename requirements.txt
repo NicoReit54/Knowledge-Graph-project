@@ -1,0 +1,17 @@
+# Core
+pandas
+requests
+python-dotenv
+
+# RDF / KG
+rdflib
+owlrl
+SPARQLWrapper
+
+# Spatial
+geopandas
+shapely
+
+# Notebooks
+jupyter
+matplotlib
