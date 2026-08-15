@@ -2,8 +2,7 @@
 
 **Status: implemented.** This design is built — see `kg/schema/ontology.ttl`
 (the formal TBox) and `kg/ingestion/build_kg.py` (the ABox instantiation, one
-function per source below). This doc remains the reference for *why*, not just
-*what*.
+function per source below). This doc remains the reference for the *why*.
 
 Covers the "KG Modelling" step: a unified data model for transport nodes, POIs,
 categories, spatial relations, and temporal aspects, per the one-pager. Builds
