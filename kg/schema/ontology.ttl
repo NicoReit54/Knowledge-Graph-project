@@ -1,0 +1,225 @@
+@prefix viennakg: <http://example.org/viennakg#> .
+@prefix schema:   <https://schema.org/> .
+@prefix geo:      <http://www.w3.org/2003/01/geo/wgs84_pos#> .
+@prefix skos:     <http://www.w3.org/2004/02/skos/core#> .
+@prefix dcterms:  <http://purl.org/dc/terms/> .
+@prefix owl:      <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs:     <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix rdf:      <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd:      <http://www.w3.org/2001/XMLSchema#> .
+
+#################################################################
+# Ontology header
+#################################################################
+
+<http://example.org/viennakg> a owl:Ontology ;
+    dcterms:title "Vienna (Live) Mobility KG Ontology" ;
+    rdfs:comment "TBox for the Knowledge Graphs course project: integrates Wiener Linien transit data with 7 Vienna POI sources. See docs/kg_schema_design.md for full rationale." ;
+    dcterms:license "Source data CC BY (Wiener Linien, Stadt Wien)"@en .
+
+#################################################################
+# Classes — POI hierarchy
+#################################################################
+
+viennakg:POI a owl:Class ;
+    rdfs:subClassOf schema:Place ;
+    rdfs:label "POI"@en ;
+    rdfs:comment "Common supertype for all seven points-of-interest sources feeding this KG." .
+
+schema:Museum a owl:Class ;
+    rdfs:subClassOf viennakg:POI ;
+    rdfs:comment "Reused schema.org type; already schema:Place > schema:CivicStructure > schema:Museum upstream. Source: MUSEUMOGD_clean.csv." .
+
+schema:Library a owl:Class ;
+    rdfs:subClassOf viennakg:POI ;
+    rdfs:comment "Reused schema.org type. Source: BUECHEREIOGD.csv." .
+
+viennakg:BathingSite a owl:Class ;
+    rdfs:subClassOf viennakg:POI ;
+    rdfs:label "Bathing site"@en ;
+    rdfs:comment "Custom class — not all Vienna Badestellen are conventional beaches, so schema:Beach wasn't forced. Source: BADESTELLENOGD.csv." .
+
+schema:Park a owl:Class ;
+    rdfs:subClassOf viennakg:POI ;
+    rdfs:comment "Reused schema.org type. Source: PARKINFOOGD_clean.csv." .
+
+viennakg:SwimmingPool a owl:Class ;
+    rdfs:subClassOf viennakg:POI ;
+    rdfs:label "Swimming pool"@en ;
+    rdfs:comment "Custom class — no clean schema.org equivalent for a public pool facility. Source: SCHWIMMBADOGD.csv." .
+
+viennakg:PlaygroundArea a owl:Class ;
+    rdfs:subClassOf viennakg:POI ;
+    rdfs:label "Playground area"@en ;
+    rdfs:comment "One instance per row of SPIELPLATZPUNKTOGD.csv (per modelling decision: separate nodes per feature, not one node per named playground with a list property)." .
+
+schema:TouristAttraction a owl:Class ;
+    rdfs:subClassOf viennakg:POI ;
+    rdfs:comment "Reused schema.org type. Source: WIENTOURISMUS_sights_clean.csv (Sehenswürdigkeit + Schloss & Palais subcategories only)." .
+
+#################################################################
+# Classes — Transport
+#################################################################
+
+viennakg:Stop a owl:Class ;
+    rdfs:subClassOf schema:Place ;
+    rdfs:comment "Wiener Linien stop. Source: wienerlinien-ogd-haltestellen.csv." .
+
+viennakg:Platform a owl:Class ;
+    rdfs:subClassOf schema:Place ;
+    rdfs:comment "Wiener Linien platform/direction; carries the RBL number used by the live monitor API. Source: wienerlinien-ogd-steige.csv." .
+
+viennakg:Line a owl:Class ;
+    rdfs:label "Line"@en ;
+    rdfs:comment "A transit route/service (not itself a Place). Source: wienerlinien-ogd-linien.csv." .
+
+#################################################################
+# Classes — Spatial
+#################################################################
+
+viennakg:District a owl:Class ;
+    rdfs:subClassOf schema:AdministrativeArea ;
+    rdfs:comment "Vienna's 23 Bezirke, promoted from a raw integer attribute to a first-class entity so district-level queries/reasoning have something to operate over. 23 named individuals defined below." .
+
+#################################################################
+# Classes — Live / temporal
+#################################################################
+
+viennakg:Departure a owl:Class ;
+    rdfs:label "Departure"@en ;
+    rdfs:comment "One scheduled/real-time departure at a Platform, from the Wiener Linien monitor API (not yet ingested — Reasoning/Service Layer concern)." .
+
+viennakg:Disruption a owl:Class ;
+    rdfs:label "Disruption"@en ;
+    rdfs:comment "A time-bounded service disruption (stoerunglang/kurz, aufzugsinfo), from the monitor API." .
+
+viennakg:OccupancyStatus a owl:Class ;
+    rdfs:label "Occupancy status"@en ;
+    rdfs:comment "Daily traffic-light occupancy indicator for a SwimmingPool, from SCHWIMMBADOGD.csv's AUSLASTUNG_* columns." .
+
+#################################################################
+# Object properties
+#################################################################
+
+viennakg:hasPlatform a owl:ObjectProperty ;
+    rdfs:domain viennakg:Stop ;
+    rdfs:range viennakg:Platform ;
+    rdfs:comment "steige.FK_HALTESTELLEN_ID -> haltestellen.HALTESTELLEN_ID" .
+
+viennakg:servedByLine a owl:ObjectProperty ;
+    rdfs:domain viennakg:Platform ;
+    rdfs:range viennakg:Line ;
+    rdfs:comment "steige.FK_LINIEN_ID -> linien.LINIEN_ID" .
+
+viennakg:hasDeparture a owl:ObjectProperty ;
+    rdfs:domain viennakg:Platform ;
+    rdfs:range viennakg:Departure .
+
+viennakg:hasDisruption a owl:ObjectProperty ;
+    rdfs:range viennakg:Disruption ;
+    rdfs:comment "Domain intentionally left open: applies to both viennakg:Stop and viennakg:Line depending on the disruption's scope." .
+
+viennakg:hasOccupancyStatus a owl:ObjectProperty ;
+    rdfs:domain viennakg:SwimmingPool ;
+    rdfs:range viennakg:OccupancyStatus .
+
+viennakg:hasCategory a owl:ObjectProperty ;
+    rdfs:domain viennakg:POI ;
+    rdfs:range skos:Concept ;
+    rdfs:comment "Links a POI to its category/subcategory in the SKOS taxonomy below." .
+
+# Reused object properties (schema.org, W3C Geo) — declared here for
+# documentation purposes; not redefining their upstream semantics.
+schema:containedInPlace rdfs:comment "Reused as-is: POI/Stop -> viennakg:District."@en .
+schema:amenityFeature rdfs:comment "Reused as-is: POI -> schema:LocationFeatureSpecification. Covers both Park Ja/Nein amenities and Playground equipment items."@en .
+
+#################################################################
+# Datatype properties
+#################################################################
+
+viennakg:areaSqm a owl:DatatypeProperty ;
+    rdfs:domain schema:Park ;
+    rdfs:range xsd:decimal ;
+    rdfs:comment "Parsed from FLAECHE (e.g. '14.714 m²') during cleaning, see notebooks/01_cleaning_data.ipynb." .
+
+viennakg:rbl a owl:DatatypeProperty ;
+    rdfs:domain viennakg:Platform ;
+    rdfs:range xsd:integer ;
+    rdfs:comment "RBL_NUMMER — the key used by the Wiener Linien monitor API." .
+
+viennakg:mode a owl:DatatypeProperty ;
+    rdfs:domain viennakg:Line ;
+    rdfs:range xsd:string ;
+    rdfs:comment "VERKEHRSMITTEL, e.g. ptTram, ptBusCity, ptMetro, ptTrainS." .
+
+viennakg:barrierFree a owl:DatatypeProperty ;
+    rdfs:domain viennakg:Departure ;
+    rdfs:range xsd:boolean ;
+    rdfs:comment "From the monitor API response, not the static steige.csv." .
+
+viennakg:countdown a owl:DatatypeProperty ;
+    rdfs:domain viennakg:Departure ;
+    rdfs:range xsd:integer ;
+    rdfs:comment "Minutes until departure, from the monitor API." .
+
+viennakg:validFrom a owl:DatatypeProperty ;
+    rdfs:domain viennakg:Disruption ;
+    rdfs:range xsd:dateTime .
+
+viennakg:validTo a owl:DatatypeProperty ;
+    rdfs:domain viennakg:Disruption ;
+    rdfs:range xsd:dateTime .
+
+#################################################################
+# SKOS category taxonomy
+#################################################################
+
+viennakg:categoryScheme a skos:ConceptScheme ;
+    rdfs:label "Vienna Mobility KG POI categories"@en .
+
+# Populated from the Wien Tourismus CATEGORY_NAME / SUBCATEGORY_NAME split —
+# the only source file with an explicit two-level taxonomy. The other 6 POI
+# types are each their own top-level category by construction (their rdf:type
+# already says what they are).
+
+viennakg:cat_Sightseeing a skos:Concept ;
+    skos:inScheme viennakg:categoryScheme ;
+    skos:prefLabel "Sightseeing"@en .
+
+viennakg:subcat_Sehenswuerdigkeit a skos:Concept ;
+    skos:inScheme viennakg:categoryScheme ;
+    skos:broader viennakg:cat_Sightseeing ;
+    skos:prefLabel "Sehenswürdigkeit"@de .
+
+viennakg:subcat_SchlossPalais a skos:Concept ;
+    skos:inScheme viennakg:categoryScheme ;
+    skos:broader viennakg:cat_Sightseeing ;
+    skos:prefLabel "Schloss & Palais"@de .
+
+#################################################################
+# District individuals (Bezirk 1–23)
+#################################################################
+
+viennakg:Bezirk1  a viennakg:District ; rdfs:label "1. Innere Stadt"@de .
+viennakg:Bezirk2  a viennakg:District ; rdfs:label "2. Leopoldstadt"@de .
+viennakg:Bezirk3  a viennakg:District ; rdfs:label "3. Landstraße"@de .
+viennakg:Bezirk4  a viennakg:District ; rdfs:label "4. Wieden"@de .
+viennakg:Bezirk5  a viennakg:District ; rdfs:label "5. Margareten"@de .
+viennakg:Bezirk6  a viennakg:District ; rdfs:label "6. Mariahilf"@de .
+viennakg:Bezirk7  a viennakg:District ; rdfs:label "7. Neubau"@de .
+viennakg:Bezirk8  a viennakg:District ; rdfs:label "8. Josefstadt"@de .
+viennakg:Bezirk9  a viennakg:District ; rdfs:label "9. Alsergrund"@de .
+viennakg:Bezirk10 a viennakg:District ; rdfs:label "10. Favoriten"@de .
+viennakg:Bezirk11 a viennakg:District ; rdfs:label "11. Simmering"@de .
+viennakg:Bezirk12 a viennakg:District ; rdfs:label "12. Meidling"@de .
+viennakg:Bezirk13 a viennakg:District ; rdfs:label "13. Hietzing"@de .
+viennakg:Bezirk14 a viennakg:District ; rdfs:label "14. Penzing"@de .
+viennakg:Bezirk15 a viennakg:District ; rdfs:label "15. Rudolfsheim-Fünfhaus"@de .
+viennakg:Bezirk16 a viennakg:District ; rdfs:label "16. Ottakring"@de .
+viennakg:Bezirk17 a viennakg:District ; rdfs:label "17. Hernals"@de .
+viennakg:Bezirk18 a viennakg:District ; rdfs:label "18. Währing"@de .
+viennakg:Bezirk19 a viennakg:District ; rdfs:label "19. Döbling"@de .
+viennakg:Bezirk20 a viennakg:District ; rdfs:label "20. Brigittenau"@de .
+viennakg:Bezirk21 a viennakg:District ; rdfs:label "21. Floridsdorf"@de .
+viennakg:Bezirk22 a viennakg:District ; rdfs:label "22. Donaustadt"@de .
+viennakg:Bezirk23 a viennakg:District ; rdfs:label "23. Liesing"@de .
