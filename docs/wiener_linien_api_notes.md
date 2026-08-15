@@ -65,14 +65,33 @@ Downloaded from data.wien.gv.at (semicolon-delimited CSV, no auth needed):
 `steige.FK_HALTESTELLEN_ID` → `haltestellen.HALTESTELLEN_ID` (which stop this platform belongs to)
 `steige.FK_LINIEN_ID` → `linien.LINIEN_ID` (which line serves this platform)
 
-So a natural KG shape: `Stop` (from haltestellen) —hasPlatform→ `Platform` (from
-steige, carries RBL + direction) —servedBy→ `Line` (from linien, carries mode).
-Live departures/disruptions from the `monitor` API then attach to `Platform` via RBL.
+This is exactly the shape built: `viennakg:Stop` —hasPlatform→ `viennakg:Platform`
+(carries RBL + direction) —servedByLine→ `viennakg:Line` (carries mode). See
+`kg/schema/ontology.ttl` and `kg/ingestion/build_kg.py` for the implementation.
+Live departures/disruptions from the `monitor` API still need to attach to
+`Platform` via RBL — not done yet, see `docs/reasoning_layer_decisions.md`.
 
-## Open questions for KG Modelling week
+## Resolved: routing data is GTFS
 
-- Whether routing data (mentioned but not detailed in this doc) is GTFS-based —
-  check data.gv.at listing.
+Confirmed — Wiener Linien's "Routing" dataset is a proper GTFS feed
+("Fahrplandaten GTFS Wien" on data.gv.at), downloaded into `data/raw/gtfs/`.
+It's the VOR regional feed, but agency_id "04" (Wiener Linien) covers 780 of
+794 routes, so barely needs filtering. `stop_times.txt` alone is 7.1M rows —
+kept tabular (pandas), not modelled as RDF triples. Full reasoning built on
+this in `reasoning/gtfs_routing.py`; decisions and rationale in
+`docs/reasoning_layer_decisions.md`.
+
+Note: GTFS stop IDs (e.g. `"at:43:3121:0:1"`) don't match this file's
+`HALTESTELLEN_ID`/`RBL_NUMMER` scheme at all — no shared column to join on.
+The two are matched by coordinate proximity at query time instead of a formal
+link; see `docs/reasoning_layer_decisions.md` for why.
+
+## Other open items
+
 - `DIVA` on the stops file vs `RBL_NUMMER` on the platforms file: DIVA is a
   higher-level stop-area grouping, RBL is what the realtime API actually keys on —
-  keep both, don't conflate them in the schema.
+  keep both, don't conflate them in the schema. (Still unresolved/not yet needed.)
+- Live data (`monitor` API — real-time departures, disruptions, `barrierFree`)
+  is documented above but not yet ingested into the KG. That's a Reasoning
+  Layer task, not resolved by the GTFS work (GTFS is the *schedule*, not live
+  data — Wiener Linien's real-time API isn't even GTFS-RT natively).
