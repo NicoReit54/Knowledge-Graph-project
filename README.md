@@ -19,9 +19,15 @@ RDF/SPARQL-based (rdflib, optionally GraphDB for larger-scale querying).
 
 - `data/raw/` — original downloaded datasets (Wiener Linien, City of Vienna POI data), untouched
 - `data/processed/` — cleaned/transformed data ready for KG ingestion
-- `notebooks/` — EDA and exploratory work
-- `kg/schema/` — ontology / schema definitions (classes, properties, shapes)
-- `kg/ingestion/` — mapping & transformation scripts (raw data → RDF triples)
+- `notebooks/` — EDA, cleaning, and KG-instantiation walkthroughs (01_cleaning_data,
+  02_kg_instantiation — the exploratory, cell-by-cell version of the ingestion logic)
+- `kg/schema/ontology.ttl` — the TBox (classes, properties); see `docs/kg_schema_design.md`
+- `kg/ingestion/build_kg.py` — rerunnable ingestion script; rebuilds
+  `kg/vienna_mobility_kg.ttl` (the canonical KG artifact) from `data/raw/` +
+  `data/processed/` in one command: `python kg/ingestion/build_kg.py`
+- `kg/vienna_mobility_kg.ttl` — the current full KG (TBox + ABox), rdflib/Turtle-backed
+  (no external triple store — plenty fast at this scale, see
+  `docs/kg_modelling_decisions.md`)
 - `reasoning/` — reasoning rules and queries (proximity, routing, preference filtering)
 - `service/` — demo layer producing activity/route suggestions from the KG
 - `docs/` — one-pager, notes, write-up material

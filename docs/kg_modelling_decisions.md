@@ -55,3 +55,32 @@ the Spielplätze repeats which are genuinely separate features.
   (`AUSLASTUNG_*`) and Badestellen water-quality test dates
   (`UNTERSUCHUNGSDATUM`) are both live-ish but not yet wired into any reasoning
   logic — revisit when building the Reasoning Layer.
+
+## KG Creation: persistence choice
+
+**Decision: in-memory `rdflib.Graph()` serialized to a single Turtle file
+(`kg/vienna_mobility_kg.ttl`), not an external triple store.** At this project's
+scale (80,485 triples total: TBox + all 7 POI sources + full Wiener Linien
+transport data), rdflib builds and serializes the whole graph from scratch in a
+few seconds — no need for GraphDB/Fuseki/Oxigraph's setup and maintenance
+overhead for a proof-of-concept this size.
+**Why:** matches the timeline reality (`docs/../feedback` — 25h/week job, tight
+runway to 2026-09-30); a file-backed graph is trivial to version and rerun,
+whereas standing up a server is a real time cost for no benefit yet.
+**How to apply:** if query performance becomes a real bottleneck (e.g. once live
+data or a bigger POI set is added), swapping in a real triple store later is a
+loader-level change, not a redesign — the ontology and mapping logic don't
+change either way. Revisit this decision if/when the Service Layer needs an
+HTTP SPARQL endpoint rather than a script-loaded graph.
+
+**Two ingestion artifacts exist, on purpose:**
+- `notebooks/02_kg_instantiation.ipynb` — exploratory, cell-by-cell, with inline
+  SPARQL validation queries; writes `kg/instances_demo.ttl`. Good for poking
+  around and understanding *why* something works.
+- `kg/ingestion/build_kg.py` — the same mapping logic, refactored into a
+  reusable script; writes `kg/vienna_mobility_kg.ttl`, the canonical/current KG
+  artifact from here on. Good for "just rebuild the KG."
+
+`kg/instances_demo.ttl` is superseded by `kg/vienna_mobility_kg.ttl` but wasn't
+deleted (this OneDrive folder blocks deletes from the sandbox) — safe to remove
+by hand if it's confusing to have both around.
