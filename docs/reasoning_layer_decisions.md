@@ -3,27 +3,54 @@
 Decisions made before/while building the Reasoning Layer. Same pattern as
 docs/kg_modelling_decisions.md — captured here so nothing gets re-litigated.
 
-## Routing realism: GTFS-based, direct connections only
+## Routing realism: GTFS-based, up to 2 transfers (superseded direct-only)
 
-**Decision:** compute actual public-transport travel time (not straight-line
-distance) using Wiener Linien's GTFS feed ("Fahrplandaten GTFS Wien" on
-data.gv.at — confirmed to exist via the Mobilitätsverbünde Österreich catalog),
-but scope routing to trips that don't require changing lines. Full multi-transfer
-journey planning (general shortest-path routing across the whole network) is
-explicitly out of scope — that's a substantial engineering problem on its own
-(it's what dedicated routers like OpenTripPlanner exist for) and not a good use
-of the remaining timeline.
-**Why:** straight-line ("as the crow flies") distance, which is all the KG
-currently supports (see the nearest-playground demo in
-`notebooks/03_kg_visualization.ipynb`), is a poor proxy for actual transit time.
-GTFS `stop_times.txt` gives real scheduled travel times, so it's the right data
-source — but a full router is disproportionate effort for a proof-of-concept
-scoped at "~5 POI categories" (now 7) per the one-pager.
-**How to apply:** a trip = walk to nearest stop (distance ÷ assumed walking
-speed) → ride using `stop_times` scheduled duration to a stop near the
-destination, only if reachable without a line change → walk the last leg. If no
-direct connection exists between the nearest stops, that's a legitimate "not
-computed" result for the POC rather than something to force an answer for.
+**Original decision (2026-08-15):** direct connections only, no transfers.
+**Revised (2026-08-18):** extended to a bounded, RAPTOR-lite round-based
+search allowing up to 2 transfers, once the direct-only limitation's real
+cost became clear in practice: well under 1% of POI pairs had a direct
+connection (see `notebooks/04_reasoning_travel_time.ipynb`'s original
+findings), which is a bad look for a project literally about generating
+activity suggestions — most real suggestions would've come back "no route."
+Full unbounded multi-transfer journey planning (arbitrary transfer count,
+proper Pareto-optimal itinerary sets) is still out of scope — that remains a
+substantially bigger problem (what dedicated routers like OpenTripPlanner
+solve) than a 2-round bounded search.
+**Why:** GTFS `stop_times.txt` gives real scheduled travel times, so it's the
+right data source (unchanged reasoning from the original decision) — but
+"direct only" turned out to understate real transit accessibility so badly
+that it wasn't a useful proof-of-concept limitation, it was closer to
+"routing doesn't really work for most queries." A bounded 2-transfer search
+is a meaningfully bigger implementation (see `reasoning/gtfs_routing.py`) but
+still tractable: round-based (round 0 = direct, round 1 = one transfer,
+round 2 = two), vectorized with pandas merges rather than per-stop Python
+loops, ~0.2-0.4s per origin search even across the whole network.
+**How to apply:** `GtfsRouter.reachable_from(origin, ...)` computes reachability
+to the WHOLE network from one origin in one pass; `travel_time_to(...)` then
+does a cheap per-destination lookup against that result. For checking many
+candidate destinations from one origin (e.g. `preference_filter.find_pois()`
+ranking a whole POI category), always use this split pattern, not
+`estimate_travel_time()` in a loop — that recomputes the full network search
+per candidate and is 100x+ slower for batch use. Direct (0-transfer)
+connections are still always found first (round 0) and are never displaced by
+a slower multi-transfer route to the same destination — a later round only
+overwrites an entry if it's strictly faster.
+
+**Two real bugs found while building the 2-transfer search** (both fixed,
+worth remembering since they'd resurface in similar spatial/graph-search code):
+1. Considering only the single geometrically-nearest stop as a search origin
+   can silently pick a badly-connected platform (e.g. one near the END of
+   most trip patterns — an alighting-heavy platform) even when a slightly
+   farther platform at the same named stop boards well. Fixed by considering
+   every stop within walking distance as a possible starting point
+   (`_nearby_stops()`), not just the nearest one.
+2. The total-time formula was double-counting the initial walk leg (present
+   even in the original direct-only version, ~2 min systematic overcount on
+   the earlier notebook's numbers — not dramatically wrong, but a real bug).
+   Also needed a deliberate tie-break rule (prefer the option requiring the
+   *shortest* walk when two boarding choices land on the exact same arrival
+   time — common on frequent lines) since an arbitrary tie-break could
+   surface a 17-minute walk over a 2-minute one for an identical total time.
 
 ## Architecture: GTFS stays tabular, not fully tripled into the KG
 

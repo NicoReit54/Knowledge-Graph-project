@@ -100,15 +100,24 @@ def _candidate_pois(g: Graph, poi_classes=None, required_amenities=None):
 
 def find_pois(g: Graph, router: GtfsRouter, origin_lon: float, origin_lat: float,
               poi_classes=None, required_amenities=None,
-              max_travel_time_min=None, depart_after="14:00:00", top_n=10):
+              max_travel_time_min=None, depart_after="14:00:00", max_transfers=2, top_n=10):
     """Preference-matching POIs near (origin_lon, origin_lat), ranked by
-    real transit travel time (not distance). POIs with no direct connection
-    are included (sorted last) unless max_travel_time_min excludes them."""
+    real transit travel time (not distance, and -- since GtfsRouter now
+    supports it -- not limited to direct connections either; up to
+    `max_transfers` transfers are considered). POIs with no connection at all
+    within `max_transfers` are still included (sorted last) unless
+    max_travel_time_min excludes them.
+
+    Uses router.reachable_from() ONCE for this origin, then router
+    .travel_time_to() per candidate -- not router.estimate_travel_time() in a
+    loop, which would redo the full network search per candidate. For 1,000+
+    candidates that's the difference between ~3s and several minutes."""
     candidates = _candidate_pois(g, poi_classes, required_amenities)
+    reachability = router.reachable_from(origin_lon, origin_lat, depart_after, max_transfers)
 
     results = []
     for uri, name, type_label, lon, lat in candidates:
-        trip = router.estimate_travel_time(origin_lon, origin_lat, lon, lat, depart_after)
+        trip = router.travel_time_to(reachability, lon, lat)
         reachable = trip["found_direct_connection"]
         if max_travel_time_min is not None:
             if not reachable or trip["total_travel_min"] > max_travel_time_min:
@@ -118,11 +127,12 @@ def find_pois(g: Graph, router: GtfsRouter, origin_lon: float, origin_lat: float
             "type": type_label,
             "lon": lon,
             "lat": lat,
-            "reachable_direct": reachable,
+            "reachable": reachable,
+            "num_transfers": trip.get("num_transfers"),
             "travel_time_min": round(trip["total_travel_min"], 1) if reachable else None,
             "line": trip.get("line"),
         })
 
     # reachable ones first (fastest first), unreachable ones after
-    results.sort(key=lambda r: (not r["reachable_direct"], r["travel_time_min"] or float("inf")))
+    results.sort(key=lambda r: (not r["reachable"], r["travel_time_min"] or float("inf")))
     return results[:top_n]
