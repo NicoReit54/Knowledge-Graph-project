@@ -57,7 +57,7 @@ def _visit_minutes_for(interest: dict) -> float:
 
 
 def _single_stop_plans(g, router, origin_lon, origin_lat, interest,
-                        time_budget_min, depart_after, top_n):
+                        time_budget_min, depart_after, top_n, max_walk_min=None):
     visit_min = _visit_minutes_for(interest)
     # only travel time is known ahead of the find_pois() call, so budget for
     # travel alone here and subtract the visit afterwards
@@ -65,7 +65,7 @@ def _single_stop_plans(g, router, origin_lon, origin_lat, interest,
                          poi_classes=interest.get("poi_classes"),
                          required_amenities=interest.get("required_amenities"),
                          max_travel_time_min=max(time_budget_min - visit_min, 0),
-                         depart_after=depart_after, top_n=top_n)
+                         depart_after=depart_after, top_n=top_n, max_walk_min=max_walk_min)
     plans = []
     for r in results:
         plans.append({
@@ -80,7 +80,7 @@ def _single_stop_plans(g, router, origin_lon, origin_lat, interest,
 def plan_activities(g, router: GtfsRouter, origin_lon: float, origin_lat: float,
                      interests: list, time_budget_min: float = 90,
                      depart_after: str = "14:00:00", top_stop1_candidates: int = 8,
-                     top_plans: int = 5) -> list:
+                     top_plans: int = 5, max_walk_min: float = None) -> list:
     """
     interests: list of 1 or 2 dicts, each like
         {"label": "a park", "poi_classes": ["Park"], "required_amenities": ["Dogs allowed"],
@@ -91,12 +91,20 @@ def plan_activities(g, router: GtfsRouter, origin_lon: float, origin_lat: float,
     interests[0] is visited first), each fitting travel + both visits within
     time_budget_min (no return trip included).
 
+    max_walk_min: hard cap on walking time to/from a transit stop, applied
+    consistently to every leg of the plan (e.g. 10 for someone with a
+    stroller or other mobility constraint) -- set once here rather than per
+    leg. None (default) leaves walking unrestricted (beyond GtfsRouter's
+    generous built-in default). See GtfsRouter.reachable_from()'s docstring
+    for what this changes: with a hard limit set, a leg with no stop within
+    range is skipped rather than silently walked farther than requested.
+
     Returns a list of plans, each {"stops": [...], "total_travel_min": ...,
     "total_itinerary_min": ...}, best (least total itinerary time) first.
     """
     if len(interests) == 1:
         return sorted(_single_stop_plans(g, router, origin_lon, origin_lat, interests[0],
-                                          time_budget_min, depart_after, top_plans),
+                                          time_budget_min, depart_after, top_plans, max_walk_min),
                        key=lambda p: p["total_itinerary_min"])[:top_plans]
 
     if len(interests) != 2:
@@ -112,7 +120,8 @@ def plan_activities(g, router: GtfsRouter, origin_lon: float, origin_lat: float,
     stop1_candidates = find_pois(g, router, origin_lon, origin_lat,
                                   poi_classes=interest1.get("poi_classes"),
                                   required_amenities=interest1.get("required_amenities"),
-                                  depart_after=depart_after, top_n=top_stop1_candidates)
+                                  depart_after=depart_after, top_n=top_stop1_candidates,
+                                  max_walk_min=max_walk_min)
 
     plans = []
     for c1 in stop1_candidates:
@@ -133,7 +142,7 @@ def plan_activities(g, router: GtfsRouter, origin_lon: float, origin_lat: float,
                                       poi_classes=interest2.get("poi_classes"),
                                       required_amenities=interest2.get("required_amenities"),
                                       max_travel_time_min=remaining_for_leg2_travel,
-                                      depart_after=depart_leg2, top_n=3)
+                                      depart_after=depart_leg2, top_n=3, max_walk_min=max_walk_min)
 
         for c2 in stop2_candidates:
             total_travel = c1["travel_time_min"] + c2["travel_time_min"]

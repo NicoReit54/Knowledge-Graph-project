@@ -100,7 +100,8 @@ def _candidate_pois(g: Graph, poi_classes=None, required_amenities=None):
 
 def find_pois(g: Graph, router: GtfsRouter, origin_lon: float, origin_lat: float,
               poi_classes=None, required_amenities=None,
-              max_travel_time_min=None, depart_after="14:00:00", max_transfers=2, top_n=10):
+              max_travel_time_min=None, depart_after="14:00:00", max_transfers=2,
+              max_walk_min=None, top_n=10):
     """Preference-matching POIs near (origin_lon, origin_lat), ranked by
     real transit travel time (not distance, and -- since GtfsRouter now
     supports it -- not limited to direct connections either; up to
@@ -108,12 +109,19 @@ def find_pois(g: Graph, router: GtfsRouter, origin_lon: float, origin_lat: float
     within `max_transfers` are still included (sorted last) unless
     max_travel_time_min excludes them.
 
+    max_walk_min: hard cap on walking time to/from a transit stop at both
+    ends (e.g. 10 for a stroller/mobility constraint) -- see
+    GtfsRouter.reachable_from()/travel_time_to() docstrings for the strict-
+    vs-fallback behavior this triggers. None (default) leaves walking
+    unrestricted (beyond the generous built-in default).
+
     Uses router.reachable_from() ONCE for this origin, then router
     .travel_time_to() per candidate -- not router.estimate_travel_time() in a
     loop, which would redo the full network search per candidate. For 1,000+
     candidates that's the difference between ~3s and several minutes."""
     candidates = _candidate_pois(g, poi_classes, required_amenities)
-    reachability = router.reachable_from(origin_lon, origin_lat, depart_after, max_transfers)
+    reachability = router.reachable_from(origin_lon, origin_lat, depart_after, max_transfers,
+                                          max_walk_min=max_walk_min)
 
     results = []
     for uri, name, type_label, lon, lat in candidates:

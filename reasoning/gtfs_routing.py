@@ -173,13 +173,23 @@ class GtfsRouter:
         return {"stop_id": row["stop_id"], "stop_name": row["stop_name"],
                 "lon": row["stop_lon"], "lat": row["stop_lat"], "distance_m": float(dists[idx])}
 
-    def _nearby_stops(self, lon: float, lat: float, max_walk_m: float = MAX_WALK_TO_STOP_M) -> list:
+    def _nearby_stops(self, lon: float, lat: float, max_walk_m: float = MAX_WALK_TO_STOP_M,
+                       strict: bool = False) -> list:
         """All stops within walking distance, not just the single nearest one.
         Matters because a single 'nearest stop' can land on a specific
         platform that happens to be poorly connected for *boarding* (e.g. near
         the END of most trip patterns -- an alighting-heavy platform) even
         when a slightly farther platform at the same named stop is a much
-        better boarding point. Returns [(stop_id, walk_seconds), ...]."""
+        better boarding point. Returns [(stop_id, walk_seconds), ...].
+
+        `strict=False` (default): if nothing is within max_walk_m, falls back
+        to the single nearest stop anyway -- avoids ordinary queries coming
+        back empty just because the default radius happened to be a little
+        too small somewhere sparse.
+        `strict=True`: no fallback -- returns [] if nothing qualifies. Used
+        when the caller has stated a real constraint (e.g. a mobility-limited
+        max walk time) that must not be silently violated by walking someone
+        farther than they said they could."""
         import numpy as np
         lons = self.stops["stop_lon"].to_numpy()
         lats = self.stops["stop_lat"].to_numpy()
@@ -191,6 +201,8 @@ class GtfsRouter:
         dists = 2 * R * np.arcsin(np.sqrt(a))
         within = np.where(dists <= max_walk_m)[0]
         if len(within) == 0:
+            if strict:
+                return []
             # fall back to the single nearest stop even if it's outside max_walk_m
             idx = int(np.argmin(dists))
             within = [idx]
@@ -319,7 +331,8 @@ class GtfsRouter:
         return merged.sort_values("dep_s")
 
     def reachable_from(self, origin_lon, origin_lat, depart_after: str = "12:00:00",
-                        max_transfers: int = 2, transfer_buffer_s: int = 180) -> dict:
+                        max_transfers: int = 2, transfer_buffer_s: int = 180,
+                        max_walk_min: float = None) -> dict:
         """The expensive part of routing (the round-based search over the
         whole network) done ONCE for a given origin+time. Returns an opaque
         bundle to pass into travel_time_to() for fast, cheap per-destination
@@ -327,32 +340,52 @@ class GtfsRouter:
         from one origin (e.g. preference_filter.find_pois() ranking a whole
         category of POIs), instead of paying the full search cost again for
         every candidate the way calling estimate_travel_time() in a loop
-        would."""
+        would.
+
+        max_walk_min: if given, a hard cap on how far someone can walk to
+        reach a boarding stop (e.g. 10 for a stroller/mobility constraint) --
+        no fallback to a farther stop if nothing qualifies (see
+        _nearby_stops(strict=...)). If None, uses the generous
+        MAX_WALK_TO_STOP_M default with its normal fallback behavior."""
         depart_s = parse_gtfs_time(depart_after)
-        origin_candidates = self._nearby_stops(origin_lon, origin_lat)
+        max_walk_m = max_walk_min * 60 * WALKING_SPEED_MPS if max_walk_min is not None else MAX_WALK_TO_STOP_M
+        origin_candidates = self._nearby_stops(origin_lon, origin_lat, max_walk_m=max_walk_m,
+                                                strict=max_walk_min is not None)
         origin_frontier = {sid: depart_s + walk_s for sid, walk_s in origin_candidates}
         best = self._reachable_stops(origin_frontier, max_transfers=max_transfers,
                                       transfer_buffer_s=transfer_buffer_s)
-        return {"best": best, "depart_s": depart_s, "max_transfers": max_transfers}
+        return {"best": best, "depart_s": depart_s, "max_transfers": max_transfers,
+                "max_walk_min": max_walk_min}
 
-    def travel_time_to(self, reachability: dict, dest_lon, dest_lat) -> dict:
+    def travel_time_to(self, reachability: dict, dest_lon, dest_lat, max_walk_min: float = None) -> dict:
         """Fast per-destination lookup against a bundle from reachable_from().
         Considers every stop within walking distance of the destination (see
         _nearby_stops), not just the single nearest one, same reasoning as
-        reachable_from() does on the origin side."""
+        reachable_from() does on the origin side.
+
+        max_walk_min: caps the FINAL walk from the last transit stop to the
+        destination. Defaults to whatever was passed to the reachable_from()
+        call this bundle came from, so a single max_walk_min setting applies
+        consistently to both ends of the trip unless overridden here."""
         best = reachability["best"]
         depart_s = reachability["depart_s"]
-        dest_candidates = self._nearby_stops(dest_lon, dest_lat)
+        effective_max_walk_min = max_walk_min if max_walk_min is not None else reachability.get("max_walk_min")
+        max_walk_m = (effective_max_walk_min * 60 * WALKING_SPEED_MPS
+                      if effective_max_walk_min is not None else MAX_WALK_TO_STOP_M)
+        dest_candidates = self._nearby_stops(dest_lon, dest_lat, max_walk_m=max_walk_m,
+                                              strict=effective_max_walk_min is not None)
         dest_walk = dict(dest_candidates)
 
         reached = [(sid, best[sid]["arrival_s"] + dest_walk[sid])
                    for sid, _ in dest_candidates if sid in best]
 
         if not reached:
+            walk_note = (f" (max walk time set to {effective_max_walk_min:.0f} min -- "
+                         "try relaxing it if this keeps happening)" if effective_max_walk_min is not None else "")
             return {
                 "found_direct_connection": False,
                 "note": f"No connection within {reachability['max_transfers']} transfer(s) "
-                        f"from this origin on this service day ({self.date}).",
+                        f"from this origin on this service day ({self.date}){walk_note}.",
             }
 
         dest_stop_id, _ = min(reached, key=lambda x: x[1])
@@ -376,7 +409,7 @@ class GtfsRouter:
 
     def estimate_travel_time(self, origin_lon, origin_lat, dest_lon, dest_lat,
                               depart_after: str = "12:00:00", max_transfers: int = 2,
-                              transfer_buffer_s: int = 180) -> dict:
+                              transfer_buffer_s: int = 180, max_walk_min: float = None) -> dict:
         """One-off origin-to-destination estimate: walk to any GTFS stop
         within walking distance -> up to `max_transfers` transit legs
         (round-based search, see _reachable_stops) -> walk from whichever
@@ -384,6 +417,11 @@ class GtfsRouter:
         many destinations from the SAME origin (e.g. ranking a whole POI
         category), use reachable_from() once + travel_time_to() per candidate
         instead -- this function pays the full network search cost every call.
+
+        max_walk_min: hard cap on walking time at EACH end (e.g. 10 for a
+        stroller/mobility constraint) -- see reachable_from()/travel_time_to()
+        docstrings. None (default) uses the generous MAX_WALK_TO_STOP_M
+        default with its normal fallback behavior.
 
         Direct (0-transfer) connections are never excluded: they're found in
         round 0 of the same search that finds 1- and 2-transfer options, and
@@ -393,12 +431,16 @@ class GtfsRouter:
 
         Returns a dict with a leg-by-leg breakdown, or a clear
         found_direct_connection=False result if nothing at all connects the
-        two areas within `max_transfers` on this service day."""
+        two areas within `max_transfers` on this service day (which, with a
+        tight max_walk_min, may simply mean nothing was walkable at one end)."""
         reachability = self.reachable_from(origin_lon, origin_lat, depart_after,
-                                            max_transfers, transfer_buffer_s)
-        result = self.travel_time_to(reachability, dest_lon, dest_lat)
+                                            max_transfers, transfer_buffer_s, max_walk_min)
+        result = self.travel_time_to(reachability, dest_lon, dest_lat, max_walk_min)
         if result["found_direct_connection"] and result.get("legs"):
-            origin_candidates = dict(self._nearby_stops(origin_lon, origin_lat))
+            max_walk_m = (max_walk_min * 60 * WALKING_SPEED_MPS if max_walk_min is not None
+                          else MAX_WALK_TO_STOP_M)
+            origin_candidates = dict(self._nearby_stops(origin_lon, origin_lat, max_walk_m=max_walk_m,
+                                                          strict=max_walk_min is not None))
             board_stop = result["legs"][0]["board_stop_id"]
             walk1_s = origin_candidates.get(board_stop, 0)
             result["walk_to_stop_min"] = walk1_s / 60
