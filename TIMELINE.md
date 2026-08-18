@@ -3,26 +3,28 @@
 Hard deadline: 2026-09-30. Self-target for a working core: end of Aug / early Sep.
 Constraint: ~25h/week part-time job alongside this.
 
-## Actual progress (updated 2026-08-15)
+## Actual progress (updated 2026-08-18)
 
-**Way ahead of the original plan.** Everything through week 4's "Reasoning
-Layer" goal is either done or started, still within week 1's dates:
+**All 5 pipeline phases have a first working version.** Still within the
+original plan's week 2 (Aug 17-23), already past week 5's "Service Layer" goal:
 
-| Original week | Planned focus | Actual status as of 2026-08-15 |
+| Original week | Planned focus | Actual status as of 2026-08-18 |
 |---|---|---|
-| 1 (Aug 10–16) | Data Collection & EDA + start KG Modelling | **Done** — plus KG Modelling, KG Creation, and a first Reasoning Layer piece |
-| 2 (Aug 17–23) | Finish KG Modelling + start KG Creation | already done |
+| 1 (Aug 10–16) | Data Collection & EDA + start KG Modelling | **Done** |
+| 2 (Aug 17–23) | Finish KG Modelling + start KG Creation | **Done** — plus KG Creation, Reasoning Layer, and Service Layer, all first-pass complete |
 | 3 (Aug 24–30) | Finish KG Creation | already done |
-| 4 (Aug 31–Sep 6) | Reasoning Layer | started — GTFS direct-connection travel time working; live data (RBL) and full preference/routing reasoning still open |
-| 5 (Sep 7–13) | Service Layer / demo | not started |
+| 4 (Aug 31–Sep 6) | Reasoning Layer | done — GTFS routing with up to 2 transfers + preference filtering; live data (RBL) still open |
+| 5 (Sep 7–13) | Service Layer / demo | done — multi-stop itineraries with visit times + walk-time limits; interactive notebook demo |
 | 6 (Sep 14–20) | Integration, testing, catch-up buffer | not started |
-| 7 (Sep 21–27) | Documentation, polish | not started |
+| 7 (Sep 21–27) | Documentation, polish | ongoing (docs kept current throughout rather than saved for this week) |
 | 8 (Sep 28–30) | Final buffer / submission | not started |
 
-This leaves a large buffer before 2026-09-30. Worth deciding deliberately what
-to do with the extra runway: pull the Service Layer forward, spend more time on
-GNN exploration (previously scoped as a stretch goal / first thing to cut), or
-just bank it given the 25h/week job constraint hasn't changed.
+This leaves a very large buffer before 2026-09-30 — roughly 5 of the original
+8 weeks unclaimed. Worth deciding deliberately what to do with it: the two
+open Service Layer extensions requested for next session (district filter,
+5-stop planner — see `docs/service_layer_decisions.md`), live data (RBL),
+GNN exploration (stretch goal), or just banking the slack given the 25h/week
+job constraint hasn't changed.
 
 ## Original plan (for reference)
 

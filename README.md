@@ -11,37 +11,48 @@ activity plans and route suggestions based on user interests, spatial proximity,
 
 See `docs/One-Pager.pdf` for the full project description and learning outcome scope.
 
-## Status (updated 2026-08-15)
+## Status (updated 2026-08-18)
 
-Ahead of the original plan — Data Collection & EDA, KG Modelling, and KG Creation
-are done, and the Reasoning Layer has a first working piece, all as of week 1 of
-the original 8-week timeline (see `TIMELINE.md`). Roughly in order of what happened:
+All five pipeline phases from the one-pager have at least a first working version.
+Way ahead of the original 8-week plan (see `TIMELINE.md`).
 
-1. **Data Collection & EDA** — done. 17 City of Vienna POI CSVs profiled (per-file
-   + cross-file overview notebooks), narrowed to 7 final sources. Wiener Linien
-   static transit data (stops/platforms/lines) downloaded and joined.
+1. **Data Collection & EDA** — done. 17 City of Vienna POI CSVs profiled, narrowed
+   to 7 final sources. Wiener Linien static transit data (stops/platforms/lines)
+   downloaded and joined.
 2. **KG Modelling** — done. Ontology at `kg/schema/ontology.ttl`, reusing
-   schema.org/W3C Geo/SKOS rather than inventing everything. Design + rationale
-   in `docs/kg_schema_design.md`.
+   schema.org/W3C Geo/SKOS. Design + rationale in `docs/kg_schema_design.md`.
 3. **KG Creation** — done. `kg/ingestion/build_kg.py` builds the full KG
-   (80,485 triples: TBox + all 7 POI sources + full Wiener Linien transport data)
-   into `kg/vienna_mobility_kg.ttl` in one command.
-4. **Reasoning Layer** — started. `reasoning/gtfs_routing.py` computes actual
-   public-transport travel time (not straight-line distance) using Wiener
-   Linien's GTFS schedule, scoped to direct (no-transfer) connections. See
-   `docs/reasoning_layer_decisions.md` for why, and
-   `notebooks/04_reasoning_travel_time.ipynb` for the validation.
+   (80,485 triples) into `kg/vienna_mobility_kg.ttl` in one command.
+4. **Reasoning Layer** — done (first pass). `reasoning/gtfs_routing.py` computes
+   real public-transport travel time (not straight-line distance) using GTFS,
+   with up to 2 transfers (extended from an initial direct-only version once
+   that turned out to cover under 1% of POI pairs) and a configurable hard
+   walking-distance limit (`max_walk_min`, for mobility constraints like a
+   stroller). `reasoning/preference_filter.py`'s `find_pois()` combines
+   category/amenity matching with travel-time ranking. See
+   `docs/reasoning_layer_decisions.md`.
+5. **Service Layer** — done (first pass). `service/activity_planner.py`'s
+   `plan_activities()` generates real 2-stop itineraries (not just single POI
+   suggestions or bare travel-time chains), with per-category default visit
+   durations (overridable) folded into the time budget and correctly chained
+   into each leg's departure time. `notebooks/06_service_layer.ipynb` has fixed
+   examples plus an interactive ipywidgets form. See
+   `docs/service_layer_decisions.md`.
 
-**Not started yet:** live data (RBL/`monitor` API) wired into reasoning, the
-Service Layer (activity/route suggestion demo), and GNN exploration (stretch
-goal, first thing to cut if time runs short).
+**Not started:** live data (RBL/`monitor` API) wired into reasoning, a return
+trip in itineraries, and GNN exploration (stretch goal, lowest priority).
+
+**Requested for next session** (see `docs/service_layer_decisions.md` for
+details): a district filter per stop/POI, and extending `plan_activities()`
+from 2 stops up to 5.
 
 ## Stack
 
 RDF/SPARQL-based: rdflib (in-memory graph, serialized to Turtle — no external
 triple store needed at this scale, see `docs/kg_modelling_decisions.md`), pandas
-for GTFS/tabular work, matplotlib for visualization. Dependency management via
-`uv` (`pyproject.toml` / `uv.lock`), not pip/requirements.txt.
+for GTFS/tabular work, matplotlib for visualization, ipywidgets for the Service
+Layer's interactive demo. Dependency management via `uv` (`pyproject.toml` /
+`uv.lock`), not pip/requirements.txt.
 
 ## Structure
 
@@ -50,30 +61,39 @@ for GTFS/tabular work, matplotlib for visualization. Dependency management via
   Wiener Linien GTFS schedule feed — `stop_times.txt` alone is 7.1M rows/621MB)
 - `data/processed/` — cleaned/derived data: deduped/parsed POI CSVs (see
   `notebooks/01_cleaning_data.ipynb`) and the GTFS feed pre-filtered to one
-  representative service day (see `reasoning/gtfs_routing.py`)
+  representative service day (`gtfs_wl_<date>_*.csv`, see `reasoning/gtfs_routing.py`)
 - `notebooks/` — numbered, run in order for the full story:
   - `00_eda_overview_all_files.ipynb` — cross-file EDA/comparison across all 17 raw CSVs
   - `eda_*.ipynb` (+ one stray `eda_MUSEUMOGD.md`, superseded, safe to delete) — per-file deep-dive EDA
   - `01_cleaning_data.ipynb` — the 3 cleaning transformations, consolidated and reproducible
   - `02_kg_instantiation.ipynb` — exploratory, cell-by-cell version of the ingestion logic
   - `03_kg_visualization.ipynb` — fun sanity-check visuals (bar chart, coordinate "map", mini graph diagrams)
-  - `04_reasoning_travel_time.ipynb` — validates the GTFS travel-time reasoning
+  - `04_reasoning_travel_time.ipynb` — validates the GTFS travel-time reasoning (incl. multi-transfer)
+  - `05_preference_filtering.ipynb` — validates category/amenity + travel-time ranking
+  - `06_service_layer.ipynb` — multi-stop itineraries, visit times, walk-time limit, interactive demo
 - `kg/schema/ontology.ttl` — the TBox (classes, properties); see `docs/kg_schema_design.md`
 - `kg/ingestion/build_kg.py` — rerunnable ingestion script:
   `python kg/ingestion/build_kg.py` rebuilds `kg/vienna_mobility_kg.ttl` (the
   canonical KG artifact) from `data/raw/` + `data/processed/`
 - `kg/vienna_mobility_kg.ttl` — the current full KG (TBox + ABox). `kg/instances_demo.ttl`
   is an earlier, superseded 3-source demo from the notebook — safe to delete
-- `reasoning/gtfs_routing.py` — `GtfsRouter`: nearest-stop lookup + direct-connection
+- `reasoning/gtfs_routing.py` — `GtfsRouter`: multi-platform, up-to-2-transfer
   travel-time estimation using GTFS, independent of the RDF graph (see
-  `docs/reasoning_layer_decisions.md` for why they're not formally linked)
-- `service/` — not started yet: demo layer producing activity/route suggestions from the KG
+  `docs/reasoning_layer_decisions.md` for why they're not formally linked).
+  Key methods: `estimate_travel_time()` (one-off), `reachable_from()` +
+  `travel_time_to()` (batch-efficient — compute reachability once per origin)
+- `reasoning/preference_filter.py` — `find_pois()`: category/amenity-matched
+  POIs ranked by real travel time
+- `service/activity_planner.py` — `plan_activities()`: multi-stop itineraries
+  with per-category visit durations (`DEFAULT_VISIT_MINUTES`) and an optional
+  hard `max_walk_min` constraint; `format_plan()` for human-readable output
 - `docs/` — key files for orientation:
   - `One-Pager.pdf` — the original project proposal
   - `wiener_linien_api_notes.md` — live API + static data notes
   - `kg_modelling_decisions.md` — scope/cleaning/schema decisions log
   - `kg_schema_design.md` — full ontology design + per-file mapping table
-  - `reasoning_layer_decisions.md` — routing scope decisions log
+  - `reasoning_layer_decisions.md` — routing scope decisions log (direct-only → 2-transfer)
+  - `service_layer_decisions.md` — Service Layer design log + next-session request
 
 ## Timeline
 
