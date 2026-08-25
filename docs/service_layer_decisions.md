@@ -8,27 +8,23 @@ up directly instead of re-deriving context.
 
 ## Requested next (starting point for the next session)
 
-Nico asked for two extensions, not yet started:
+Nico asked for a **planner that handles up to 5 stops**, not just 2 —
+**not started yet.** `plan_activities()` currently hardcodes the 2-interest
+case (see "Plan scope" below) — this needs generalizing the stop1→stop2
+chaining pattern into an N-stop loop. Worth thinking through before
+starting: search cost multiplies with each additional stop
+(`top_stop1_candidates` candidates × similar branching at each subsequent
+stop), so either the candidate pool per stop needs to shrink as stops
+increase, or some pruning/beam-search approach is needed to keep a 5-stop
+search tractable — this is not just "loop the existing 2-stop code," it's
+closer in spirit to how the direct-only → 2-transfer GTFS routing extension
+needed real algorithmic thought, not just more iterations. Scope this
+properly before diving in (similar to how the multi-transfer routing
+decision got an explicit options discussion before building) rather than
+assuming it is a small tweak.
 
-1. **A district filter per stop/POI.** Every POI already carries a
-   `schema:containedInPlace` link to a `viennakg:District` in the KG (from KG
-   Modelling — see `docs/kg_schema_design.md`), so the data is there; this is
-   about exposing it as an actual filter option in `find_pois()` /
-   `plan_activities()` / the notebook 06 widget (e.g. "only look in Bezirk 1,
-   7, 8"), not new KG work.
-2. **A planner that handles up to 5 stops**, not just 2. `plan_activities()`
-   currently hardcodes the 2-interest case (see "Plan scope" below) — this
-   needs generalizing the stop1→stop2 chaining pattern into an N-stop loop.
-   Worth thinking through before starting: search cost multiplies with each
-   additional stop (`top_stop1_candidates` candidates × similar branching at
-   each subsequent stop), so either the candidate pool per stop needs to
-   shrink as stops increase, or some pruning/beam-search approach is needed
-   to keep a 5-stop search tractable — this is not just "loop the existing
-   2-stop code," it's closer in spirit to how the direct-only → 2-transfer
-   GTFS routing extension needed real algorithmic thought, not just more
-   iterations. Scope this properly before diving in (similar to how the
-   multi-transfer routing decision got an explicit options discussion before
-   building) rather than assuming it is a small tweak.
+(The district filter that used to be listed here alongside the 5-stop
+planner is done — see "District filtering" below.)
 
 ## Plan scope: 2 stops, itinerary budget (not travel-only)
 
@@ -87,3 +83,50 @@ a transfer example even showed up among the fastest-ranked options (see
 `notebooks/06_service_layer.ipynb` section 5). Worth remembering when
 demonstrating or testing multi-transfer behavior: don't assume the first
 POI category tried will show it, pick categories/origins deliberately.
+
+## District filtering: per-interest, not plan-wide (done 2026-08-25)
+
+**Decision:** `find_pois()` gained a `district` parameter (number 1-23,
+`"BezirkN"`, or a case-insensitive substring of the district's `rdfs:label`,
+resolved via `resolve_district()` in `reasoning/preference_filter.py`);
+`plan_activities()` reads `district` out of each interest dict rather than
+taking one plan-wide argument.
+**Why:** every POI already carries `schema:containedInPlace` → a
+`viennakg:District` from KG Modelling, so this needed zero new ingestion —
+purely a query/API surface change. Per-interest (not plan-wide) because a
+2-stop plan spanning two different districts is a completely normal, useful
+request ("a park in the 6th district, then a museum wherever's fastest") —
+see `notebooks/06_service_layer.ipynb` section 6, which demonstrates exactly
+that combination. An unresolvable district string raises `ValueError`
+rather than silently matching zero POIs, since a typo there would otherwise
+look identical to "genuinely nothing in this district."
+**How to apply:** applied as an early candidate-set filter in
+`_candidate_pois()`, before travel-time computation — so a district filter
+also shrinks the routing workload, not just the final display list. The
+notebook 06 widget exposes it as an independent dropdown per interest
+("Any district" + all 23), separate from the category dropdown.
+
+## POI descriptions: composed from structured fields, not a real text field
+
+**Decision:** `describe_poi()` in `reasoning/preference_filter.py` builds a
+best-effort human-readable string per POI from whatever structured fields it
+has (district label, address, area, opening hours, phone/email, url,
+tourist-attraction subcategory, true-valued amenities) and attaches it as
+`description` on every result from `find_pois()` / stop dict from
+`plan_activities()`. `format_plan()` prints it indented under each stop by
+default (`show_description=True`).
+**Why:** checked first — there is no `schema:description` (or any free-text
+description) anywhere in the 80K+-triple graph, across any of the 7 POI
+source datasets. Rather than silently omitting descriptions or fabricating
+text not backed by the KG, this composes a description strictly from fields
+that are actually present, so it's honest about being KG-derived rather than
+editorial content.
+**How to apply:** coverage is uneven by design — `BathingSite` has almost no
+structured fields beyond name/location/district, so its description is
+often just the district; `Library`/`Museum`/`TouristAttraction` tend to be
+richer (address, contact, hours, url). Don't read a short description as
+"nothing interesting here" — it means the source dataset for that POI class
+just didn't include much. If richer POI data is ever ingested, extend
+`describe_poi()`'s field list rather than switching to a different
+mechanism — the compose-from-structured-fields approach itself doesn't need
+to change.

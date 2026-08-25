@@ -17,6 +17,16 @@ Scope, deliberately:
 - Uses the same GtfsRouter/find_pois building blocks as the rest of the
   Reasoning Layer -- no new KG queries or ontology needed here, this is
   purely an orchestration layer on top of what already exists.
+- Each interest can carry its own "district" filter (see find_pois()'s
+  docstring in reasoning/preference_filter.py) -- e.g. "a park in the 6th
+  district, then a library anywhere" is expressed as two interests with
+  different district values, not a single plan-wide filter, since a 2-stop
+  plan naturally spans more than one district.
+- Each returned stop also carries a best-effort "description" string
+  (composed from whatever structured KG fields that POI has -- there's no
+  free-text description in the data, see preference_filter.describe_poi())
+  and the POI's "uri", flowing through automatically since stops are built
+  by spreading find_pois()'s result dicts.
 """
 
 import sys
@@ -64,6 +74,7 @@ def _single_stop_plans(g, router, origin_lon, origin_lat, interest,
     results = find_pois(g, router, origin_lon, origin_lat,
                          poi_classes=interest.get("poi_classes"),
                          required_amenities=interest.get("required_amenities"),
+                         district=interest.get("district"),
                          max_travel_time_min=max(time_budget_min - visit_min, 0),
                          depart_after=depart_after, top_n=top_n, max_walk_min=max_walk_min)
     plans = []
@@ -84,12 +95,17 @@ def plan_activities(g, router: GtfsRouter, origin_lon: float, origin_lat: float,
     """
     interests: list of 1 or 2 dicts, each like
         {"label": "a park", "poi_classes": ["Park"], "required_amenities": ["Dogs allowed"],
-         "visit_minutes": 60}
-    (required_amenities and visit_minutes both optional -- visit_minutes falls
-    back to DEFAULT_VISIT_MINUTES for the POI class). One interest -> ranked
-    single-stop suggestions. Two interests -> 2-stop plans (order matters:
-    interests[0] is visited first), each fitting travel + both visits within
-    time_budget_min (no return trip included).
+         "district": 6, "visit_minutes": 60}
+    (required_amenities, district, and visit_minutes all optional --
+    visit_minutes falls back to DEFAULT_VISIT_MINUTES for the POI class;
+    district restricts that stop's candidates to one Vienna district, see
+    reasoning/preference_filter.py's resolve_district() for accepted formats
+    -- a number 1-23, "BezirkN", or a label substring). One interest ->
+    ranked single-stop suggestions. Two interests -> 2-stop plans (order
+    matters: interests[0] is visited first), each fitting travel + both
+    visits within time_budget_min (no return trip included). Each interest's
+    district filter applies only to that stop -- a 2-stop plan can span two
+    different districts by design.
 
     max_walk_min: hard cap on walking time to/from a transit stop, applied
     consistently to every leg of the plan (e.g. 10 for someone with a
@@ -101,6 +117,8 @@ def plan_activities(g, router: GtfsRouter, origin_lon: float, origin_lat: float,
 
     Returns a list of plans, each {"stops": [...], "total_travel_min": ...,
     "total_itinerary_min": ...}, best (least total itinerary time) first.
+    Each stop dict includes "description" (best-effort, from whatever KG
+    fields that POI has) and "uri" alongside the usual name/travel fields.
     """
     if len(interests) == 1:
         return sorted(_single_stop_plans(g, router, origin_lon, origin_lat, interests[0],
@@ -120,6 +138,7 @@ def plan_activities(g, router: GtfsRouter, origin_lon: float, origin_lat: float,
     stop1_candidates = find_pois(g, router, origin_lon, origin_lat,
                                   poi_classes=interest1.get("poi_classes"),
                                   required_amenities=interest1.get("required_amenities"),
+                                  district=interest1.get("district"),
                                   depart_after=depart_after, top_n=top_stop1_candidates,
                                   max_walk_min=max_walk_min)
 
@@ -141,6 +160,7 @@ def plan_activities(g, router: GtfsRouter, origin_lon: float, origin_lat: float,
         stop2_candidates = find_pois(g, router, c1["lon"], c1["lat"],
                                       poi_classes=interest2.get("poi_classes"),
                                       required_amenities=interest2.get("required_amenities"),
+                                      district=interest2.get("district"),
                                       max_travel_time_min=remaining_for_leg2_travel,
                                       depart_after=depart_leg2, top_n=3, max_walk_min=max_walk_min)
 
@@ -161,10 +181,13 @@ def plan_activities(g, router: GtfsRouter, origin_lon: float, origin_lat: float,
     return plans[:top_plans]
 
 
-def format_plan(plan: dict, depart_after: str = "14:00:00") -> str:
+def format_plan(plan: dict, depart_after: str = "14:00:00", show_description: bool = True) -> str:
     """Human-readable itinerary rendering -- arrive/visit-until per stop, not
     just travel legs. For print()ing in a notebook or demo, not meant as the
-    final UI."""
+    final UI. show_description prints each stop's best-effort KG-derived
+    description (address, amenities, etc.) on an indented line beneath it,
+    when one is available (blank descriptions are skipped, not printed
+    empty)."""
     lines = []
     clock_s = parse_gtfs_time(depart_after)
     lines.append(f"Depart at {depart_after}")
@@ -178,6 +201,8 @@ def format_plan(plan: dict, depart_after: str = "14:00:00") -> str:
         lines.append(f"  -> {stop['label']}: {stop['name']} "
                       f"(arrive {arrive_str}, {stop['leg_travel_min']:.1f} min travel{transfer_txt}; "
                       f"visit until {leave_str}, {stop['visit_min']:.0f} min)")
+        if show_description and stop.get("description"):
+            lines.append(f"     {stop['description']}")
     lines.append(f"Done at {_seconds_to_hms(round(clock_s))[:5]} -- "
                  f"{plan['total_travel_min']:.1f} min travel + "
                  f"{plan['total_itinerary_min'] - plan['total_travel_min']:.0f} min visiting "
