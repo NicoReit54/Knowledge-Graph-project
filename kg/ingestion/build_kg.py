@@ -1,15 +1,12 @@
 """
-Vienna Mobility KG -- ingestion script.
+Vienna Mobility KG - ingestion script.
 
 Rebuilds the full knowledge graph (TBox + ABox) from data/raw/ + data/processed/
 and writes it to kg/vienna_mobility_kg.ttl.
 
 Reusable/rerunnable version of the logic prototyped in
-notebooks/02_kg_instantiation.ipynb -- see that notebook for the exploratory,
-cell-by-cell version with inline SPARQL validation queries. This script is the
-"just run it" artifact; the notebook is the "poke around and understand it"
-artifact. Same mapping logic in both, see docs/kg_schema_design.md for the
-full rationale behind each choice.
+notebooks/02_kg_instantiation.ipynb - see that notebook for the exploratory,
+cell-by-cell version.
 
 Usage:
     python kg/ingestion/build_kg.py
@@ -23,8 +20,6 @@ import pandas as pd
 from rdflib import BNode, Graph, Literal, Namespace, RDF
 from rdflib.namespace import XSD
 
-# Resolved relative to this file, not the caller's cwd, so `python
-# kg/ingestion/build_kg.py` works from anywhere.
 ROOT = Path(__file__).resolve().parents[2]
 RAW = ROOT / "data" / "raw"
 PROCESSED = ROOT / "data" / "processed"
@@ -68,7 +63,7 @@ def add_geo(g, poi, shape):
 def add_amenity(g, poi, label, value=True):
     """schema:amenityFeature -> schema:LocationFeatureSpecification(name, value).
     Covers both Park's boolean amenities and Playground's equipment list with
-    one pattern -- see docs/kg_schema_design.md."""
+    one pattern - see docs/kg_schema_design.md."""
     feature = BNode()
     g.add((poi, SCHEMA.amenityFeature, feature))
     g.add((feature, RDF.type, SCHEMA.LocationFeatureSpecification))
@@ -77,7 +72,7 @@ def add_amenity(g, poi, label, value=True):
 
 
 # --------------------------------------------------------------------------
-# Per-source loaders -- one function per row of docs/kg_schema_design.md's
+# Per-source loaders - one function per row of docs/kg_schema_design.md's
 # mapping table. Each returns the number of source rows processed.
 # --------------------------------------------------------------------------
 
@@ -174,7 +169,7 @@ def load_schwimmbaeder(g):
 
 
 def load_spielplaetze(g):
-    """One PlaygroundArea instance per source row -- deliberately not aggregated
+    """One PlaygroundArea instance per source row - deliberately not aggregated
     by ANL_NAME, per the 'separate nodes per feature' modelling decision."""
     df = pd.read_csv(RAW / "SPIELPLATZPUNKTOGD.csv")
     for _, row in df.iterrows():
@@ -272,7 +267,7 @@ POI_LOADERS = [
 
 def main():
     if not SCHEMA_TTL.exists():
-        sys.exit(f"Ontology not found at {SCHEMA_TTL} -- run from a checkout with kg/schema/ontology.ttl present.")
+        sys.exit(f"Ontology not found at {SCHEMA_TTL}.")
 
     g = Graph()
     g.parse(str(SCHEMA_TTL), format="turtle")
