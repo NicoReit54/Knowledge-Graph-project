@@ -3,10 +3,12 @@
 Hard deadline: 2026-09-30. Self-target for a working core: end of Aug / early Sep.
 Constraint: ~25h/week part-time job alongside this.
 
-## Actual progress (updated 2026-08-18)
+## Actual progress (updated 2026-08-25)
 
-**All 5 pipeline phases have a first working version.** Still within the
-original plan's week 2 (Aug 17-23), already past week 5's "Service Layer" goal:
+**All 5 pipeline phases have a first working version, including both
+previously-requested Service Layer extensions** (district filter, 1-to-5-stop
+planner via beam search). Still within the original plan's week 2 (Aug
+17-23), already well past week 5's "Service Layer" goal:
 
 | Original week | Planned focus | Actual status as of 2026-08-18 |
 |---|---|---|
@@ -20,10 +22,10 @@ original plan's week 2 (Aug 17-23), already past week 5's "Service Layer" goal:
 | 8 (Sep 28–30) | Final buffer / submission | not started |
 
 This leaves a very large buffer before 2026-09-30 — roughly 5 of the original
-8 weeks unclaimed. Worth deciding deliberately what to do with it: the two
-open Service Layer extensions requested for next session (district filter,
-5-stop planner — see `docs/service_layer_decisions.md`), live data (RBL),
-GNN exploration (stretch goal), or just banking the slack given the 25h/week
+8 weeks unclaimed, and no outstanding Service Layer requests. Worth deciding
+deliberately what to do with it: live data (RBL), a return trip in
+itineraries, GNN exploration (stretch goal), integration/testing/polish
+(weeks 6-7's original focus), or just banking the slack given the 25h/week
 job constraint hasn't changed.
 
 ## Original plan (for reference)

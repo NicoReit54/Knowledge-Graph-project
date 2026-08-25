@@ -11,7 +11,7 @@ activity plans and route suggestions based on user interests, spatial proximity,
 
 See `docs/One-Pager.pdf` for the full project description and learning outcome scope.
 
-## Status (updated 2026-08-18)
+## Status (updated 2026-08-25)
 
 All five pipeline phases from the one-pager have at least a first working version.
 Way ahead of the original 8-week plan (see `TIMELINE.md`).
@@ -32,19 +32,23 @@ Way ahead of the original 8-week plan (see `TIMELINE.md`).
    category/amenity matching with travel-time ranking. See
    `docs/reasoning_layer_decisions.md`.
 5. **Service Layer** — done (first pass). `service/activity_planner.py`'s
-   `plan_activities()` generates real 2-stop itineraries (not just single POI
-   suggestions or bare travel-time chains), with per-category default visit
-   durations (overridable) folded into the time budget and correctly chained
-   into each leg's departure time. `notebooks/06_service_layer.ipynb` has fixed
-   examples plus an interactive ipywidgets form. See
+   `plan_activities()` generates real 1-to-5-stop itineraries (not just single
+   POI suggestions or bare travel-time chains), visited in the given order and
+   found via a bounded beam search (not exhaustive branching, which is
+   intractable past ~2 stops — see `docs/service_layer_decisions.md`). Each
+   stop can carry its own district filter (`schema:containedInPlace`-based)
+   and gets a best-effort description composed from whatever structured KG
+   fields it has. Per-category default visit durations (overridable) are
+   folded into the time budget and correctly chained into each leg's
+   departure time; the same POI is never suggested twice within one plan.
+   `notebooks/06_service_layer.ipynb` has fixed examples plus an interactive
+   ipywidgets form (up to 5 interest slots). See
    `docs/service_layer_decisions.md`.
 
 **Not started:** live data (RBL/`monitor` API) wired into reasoning, a return
-trip in itineraries, and GNN exploration (stretch goal, lowest priority).
-
-**Requested for next session** (see `docs/service_layer_decisions.md` for
-details): a district filter per stop/POI, and extending `plan_activities()`
-from 2 stops up to 5.
+trip in itineraries, and GNN exploration (stretch goal, lowest priority). No
+specific next-session request pending — see `docs/service_layer_decisions.md`
+and `TIMELINE.md` for what's naturally next.
 
 ## Stack
 
@@ -82,11 +86,15 @@ Layer's interactive demo. Dependency management via `uv` (`pyproject.toml` /
   `docs/reasoning_layer_decisions.md` for why they're not formally linked).
   Key methods: `estimate_travel_time()` (one-off), `reachable_from()` +
   `travel_time_to()` (batch-efficient — compute reachability once per origin)
-- `reasoning/preference_filter.py` — `find_pois()`: category/amenity-matched
-  POIs ranked by real travel time
-- `service/activity_planner.py` — `plan_activities()`: multi-stop itineraries
-  with per-category visit durations (`DEFAULT_VISIT_MINUTES`) and an optional
-  hard `max_walk_min` constraint; `format_plan()` for human-readable output
+- `reasoning/preference_filter.py` — `find_pois()`: category/amenity/district-matched
+  POIs ranked by real travel time; `describe_poi()` composes a best-effort
+  description from structured KG fields (no free-text description exists in
+  the source data); `list_districts()`/`resolve_district()` for the district filter
+- `service/activity_planner.py` — `plan_activities()`: 1-to-5-stop itineraries
+  (bounded beam search, fixed stop order, POI dedup within a plan) with
+  per-category visit durations (`DEFAULT_VISIT_MINUTES`), per-stop district
+  filtering, and an optional hard `max_walk_min` constraint; `format_plan()`
+  for human-readable output
 - `docs/` — key files for orientation:
   - `One-Pager.pdf` — the original project proposal
   - `wiener_linien_api_notes.md` — live API + static data notes

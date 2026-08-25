@@ -5,28 +5,58 @@ lists -- per the one-pager's motivation ("someone else planned a day... for
 you"), a single ranked list of parks is a search result, not a plan.
 
 Scope, deliberately:
-- Plans are at most 2 stops (origin -> stop1 -> stop2). More stops is a
-  straightforward extension of the same pattern but multiplies the search
-  cost; 2 stops already demonstrates real multi-stop plan generation.
-- `time_budget_min` covers travel AND visiting time at each stop (a real
+- Plans are 1 to 5 stops (origin -> stop1 -> stop2 -> ... -> stopN), built via
+  a bounded BEAM SEARCH, not exhaustive branching -- see the "Why beam
+  search" note below. Full unbounded search (try every candidate at every
+  stage) is combinatorially infeasible past ~2 stops.
+- Stop ORDER is exactly the order `interests` are given in -- the search
+  does not try alternate orderings of the same interests to find a faster
+  route. That's a deliberate scope decision (see docs/service_layer_decisions.md),
+  not an oversight: searching over orderings too is a much bigger problem
+  (small traveling-salesman instance) that multiplies cost by up to N!
+  orderings on top of the beam search already required per ordering.
+- The same POI is never suggested twice within one plan (tracked by URI
+  across stages) -- a real correctness concern once plans have enough stops
+  that overlap becomes likely, not just a theoretical edge case.
+- `time_budget_min` covers travel AND visiting time at every stop (a real
   itinerary budget, e.g. "I have 3 hours this afternoon"), but does NOT
   include a return trip home -- the plan ends when you're done at the last
-  stop. Visit durations default to DEFAULT_VISIT_MINUTES per POI class
-  (rough, stated assumptions -- not derived from any data source -- and
-  overridable per interest via "visit_minutes").
+  stop. It also does NOT auto-scale with the number of stops: 5 interests at
+  their default visit times can easily need several hundred minutes before
+  travel is even counted, and an infeasible budget just yields zero plans
+  (the same graceful-degradation behavior as before), not an error or a
+  silently-shrunk plan. Visit durations default to DEFAULT_VISIT_MINUTES per
+  POI class (rough, stated assumptions -- not derived from any data source
+  -- and overridable per interest via "visit_minutes").
 - Uses the same GtfsRouter/find_pois building blocks as the rest of the
   Reasoning Layer -- no new KG queries or ontology needed here, this is
   purely an orchestration layer on top of what already exists.
 - Each interest can carry its own "district" filter (see find_pois()'s
   docstring in reasoning/preference_filter.py) -- e.g. "a park in the 6th
   district, then a library anywhere" is expressed as two interests with
-  different district values, not a single plan-wide filter, since a 2-stop
-  plan naturally spans more than one district.
+  different district values, not a single plan-wide filter, since a plan
+  naturally can span more than one district.
 - Each returned stop also carries a best-effort "description" string
   (composed from whatever structured KG fields that POI has -- there's no
   free-text description in the data, see preference_filter.describe_poi())
   and the POI's "uri", flowing through automatically since stops are built
   by spreading find_pois()'s result dicts.
+
+Why beam search: the expensive operation per candidate stop is
+GtfsRouter.reachable_from() (a network-wide search from that stop's
+location, ~0.2-0.4s), triggered once per find_pois() call. Naive full
+branching (evaluate every candidate at every stage) costs O(C^N) such calls
+for N stops and C candidates per stage -- e.g. 8 candidates x 4 remaining
+stages is >600 calls for a 5-stop plan, minutes of runtime. Beam search
+instead keeps only the `beam_width` best partial itineraries after each
+stage (ranked by cumulative time-so-far) and only expands those, capping
+cost at O(beam_width x N) reachable_from() calls regardless of how many
+candidate POIs exist per category -- for beam_width=6 and 5 stops, at most
+~25 calls. The tradeoff: this is a heuristic, not an exhaustive search --
+a partial itinerary that looks slightly worse after 2 stops but would lead
+to a much better plan by stop 4 can get pruned before that upside is ever
+seen. Same bounded-not-exhaustive spirit as capping GTFS transfers at 2
+rather than searching unboundedly (see docs/reasoning_layer_decisions.md).
 """
 
 import sys
@@ -36,6 +66,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from reasoning.gtfs_routing import GtfsRouter, format_seconds, parse_gtfs_time
 from reasoning.preference_filter import find_pois
+
+MAX_STOPS = 5
 
 # Rough, stated assumptions -- not derived from any survey or dataset, just
 # reasonable defaults for a typical visit. Override per-interest via
@@ -66,46 +98,40 @@ def _visit_minutes_for(interest: dict) -> float:
     return DEFAULT_VISIT_MINUTES.get(poi_classes[0], 45) if poi_classes else 45
 
 
-def _single_stop_plans(g, router, origin_lon, origin_lat, interest,
-                        time_budget_min, depart_after, top_n, max_walk_min=None):
-    visit_min = _visit_minutes_for(interest)
-    # only travel time is known ahead of the find_pois() call, so budget for
-    # travel alone here and subtract the visit afterwards
-    results = find_pois(g, router, origin_lon, origin_lat,
-                         poi_classes=interest.get("poi_classes"),
-                         required_amenities=interest.get("required_amenities"),
-                         district=interest.get("district"),
-                         max_travel_time_min=max(time_budget_min - visit_min, 0),
-                         depart_after=depart_after, top_n=top_n, max_walk_min=max_walk_min)
-    plans = []
-    for r in results:
-        plans.append({
-            "stops": [{**r, "label": interest.get("label", "stop"),
-                       "leg_travel_min": r["travel_time_min"], "visit_min": visit_min}],
-            "total_travel_min": r["travel_time_min"],
-            "total_itinerary_min": r["travel_time_min"] + visit_min,
-        })
-    return plans
-
-
 def plan_activities(g, router: GtfsRouter, origin_lon: float, origin_lat: float,
                      interests: list, time_budget_min: float = 90,
-                     depart_after: str = "14:00:00", top_stop1_candidates: int = 8,
+                     depart_after: str = "14:00:00", beam_width: int = 4,
                      top_plans: int = 5, max_walk_min: float = None) -> list:
     """
-    interests: list of 1 or 2 dicts, each like
+    interests: list of 1 to 5 dicts, each like
         {"label": "a park", "poi_classes": ["Park"], "required_amenities": ["Dogs allowed"],
          "district": 6, "visit_minutes": 60}
     (required_amenities, district, and visit_minutes all optional --
     visit_minutes falls back to DEFAULT_VISIT_MINUTES for the POI class;
     district restricts that stop's candidates to one Vienna district, see
     reasoning/preference_filter.py's resolve_district() for accepted formats
-    -- a number 1-23, "BezirkN", or a label substring). One interest ->
-    ranked single-stop suggestions. Two interests -> 2-stop plans (order
-    matters: interests[0] is visited first), each fitting travel + both
-    visits within time_budget_min (no return trip included). Each interest's
-    district filter applies only to that stop -- a 2-stop plan can span two
-    different districts by design.
+    -- a number 1-23, "BezirkN", or a label substring). Stops are visited in
+    EXACTLY the order interests are given -- the search does not try
+    alternate orderings (see module docstring for why). Each interest's
+    district filter applies only to that stop -- a plan can span several
+    different districts by design. The same POI is never suggested twice
+    within one plan.
+
+    beam_width: how many candidate POIs to consider at each stage, AND how
+    many partial itineraries survive pruning between stages (both the same
+    knob -- see module docstring's "Why beam search" for the cost/quality
+    tradeoff this controls). Higher = better plans, more runtime. Measured
+    on this graph/environment for a 5-stop search: ~18s at beam_width=2,
+    ~26s at beam_width=3, ~34s at beam_width=4 (the default -- chosen as
+    the point where more width stopped meaningfully improving the best plan
+    found in testing), ~50s+ at beam_width=6. Cost grows roughly linearly
+    with beam_width, not steeply, since it's the number of reachable_from()
+    network searches that scales, one per surviving partial itinerary per
+    stage. 1-2 stop searches finish in a few seconds at any beam_width.
+    Lower this for a snappier interactive widget at the cost of missing
+    some better itineraries; these are this environment's numbers and this
+    project's small candidate pool, so treat them as a rough guide, not a
+    guarantee, if run elsewhere.
 
     max_walk_min: hard cap on walking time to/from a transit stop, applied
     consistently to every leg of the plan (e.g. 10 for someone with a
@@ -120,62 +146,68 @@ def plan_activities(g, router: GtfsRouter, origin_lon: float, origin_lat: float,
     Each stop dict includes "description" (best-effort, from whatever KG
     fields that POI has) and "uri" alongside the usual name/travel fields.
     """
-    if len(interests) == 1:
-        return sorted(_single_stop_plans(g, router, origin_lon, origin_lat, interests[0],
-                                          time_budget_min, depart_after, top_plans, max_walk_min),
-                       key=lambda p: p["total_itinerary_min"])[:top_plans]
+    if not interests or len(interests) > MAX_STOPS:
+        raise ValueError(f"plan_activities supports 1 to {MAX_STOPS} interests, got {len(interests)}")
 
-    if len(interests) != 2:
-        raise ValueError("plan_activities supports 1 or 2 interests, not more (see module docstring)")
+    visit_minutes = [_visit_minutes_for(i) for i in interests]
 
-    interest1, interest2 = interests
-    visit1 = _visit_minutes_for(interest1)
-    visit2 = _visit_minutes_for(interest2)
+    # Beam search state: each "partial" is one candidate itinerary-so-far.
+    # Starts as a single empty itinerary rooted at the origin.
+    beam = [{
+        "stops": [],
+        "lon": origin_lon,
+        "lat": origin_lat,
+        "clock_s": parse_gtfs_time(depart_after),
+        "total_travel_min": 0.0,
+        "total_visit_min": 0.0,
+        "visited_uris": set(),
+    }]
 
-    # top_stop1_candidates by travel time, NOT yet capped by the full budget --
-    # leg 2 (plus both visits) still needs to fit, so a generous first-leg
-    # candidate pool is kept rather than pre-filtering too aggressively
-    stop1_candidates = find_pois(g, router, origin_lon, origin_lat,
-                                  poi_classes=interest1.get("poi_classes"),
-                                  required_amenities=interest1.get("required_amenities"),
-                                  district=interest1.get("district"),
-                                  depart_after=depart_after, top_n=top_stop1_candidates,
-                                  max_walk_min=max_walk_min)
+    for interest, visit_min in zip(interests, visit_minutes):
+        next_beam = []
+        for partial in beam:
+            used_so_far = partial["total_travel_min"] + partial["total_visit_min"]
+            remaining_for_leg_travel = time_budget_min - used_so_far - visit_min
+            if remaining_for_leg_travel <= 0:
+                continue  # can't afford this stop's visit even with zero travel
 
-    plans = []
-    for c1 in stop1_candidates:
-        if not c1["reachable"]:
-            continue
-        used_so_far = c1["travel_time_min"] + visit1
-        remaining_for_leg2_travel = time_budget_min - used_so_far - visit2
-        if remaining_for_leg2_travel <= 0:
-            continue
+            candidates = find_pois(g, router, partial["lon"], partial["lat"],
+                                    poi_classes=interest.get("poi_classes"),
+                                    required_amenities=interest.get("required_amenities"),
+                                    district=interest.get("district"),
+                                    max_travel_time_min=remaining_for_leg_travel,
+                                    depart_after=_seconds_to_hms(round(partial["clock_s"])),
+                                    top_n=beam_width, max_walk_min=max_walk_min)
 
-        # arrival clock time at stop1 PLUS the time spent there becomes the
-        # departure time for leg 2 -- chaining the actual itinerary, not just
-        # subtracting minutes from a budget
-        depart_leg2_s = parse_gtfs_time(depart_after) + (c1["travel_time_min"] + visit1) * 60
-        depart_leg2 = _seconds_to_hms(round(depart_leg2_s))
+            for c in candidates:
+                if not c["reachable"] or c["uri"] in partial["visited_uris"]:
+                    continue  # unreachable (shouldn't occur given max_travel_time_min) or already visited this trip
+                next_beam.append({
+                    "stops": partial["stops"] + [{**c, "label": interest.get("label", "stop"),
+                                                   "leg_travel_min": c["travel_time_min"],
+                                                   "visit_min": visit_min}],
+                    "lon": c["lon"],
+                    "lat": c["lat"],
+                    "clock_s": partial["clock_s"] + (c["travel_time_min"] + visit_min) * 60,
+                    "total_travel_min": partial["total_travel_min"] + c["travel_time_min"],
+                    "total_visit_min": partial["total_visit_min"] + visit_min,
+                    "visited_uris": partial["visited_uris"] | {c["uri"]},
+                })
 
-        stop2_candidates = find_pois(g, router, c1["lon"], c1["lat"],
-                                      poi_classes=interest2.get("poi_classes"),
-                                      required_amenities=interest2.get("required_amenities"),
-                                      district=interest2.get("district"),
-                                      max_travel_time_min=remaining_for_leg2_travel,
-                                      depart_after=depart_leg2, top_n=3, max_walk_min=max_walk_min)
+        # prune: keep only the best `beam_width` partial itineraries (by
+        # cumulative time so far) before expanding the next stage -- this is
+        # what keeps cost linear in beam_width x len(interests) instead of
+        # exponential in len(interests)
+        next_beam.sort(key=lambda p: p["total_travel_min"] + p["total_visit_min"])
+        beam = next_beam[:beam_width]
+        if not beam:
+            break  # budget exhausted for every surviving branch -- no point continuing
 
-        for c2 in stop2_candidates:
-            total_travel = c1["travel_time_min"] + c2["travel_time_min"]
-            plans.append({
-                "stops": [
-                    {**c1, "label": interest1.get("label", "stop 1"),
-                     "leg_travel_min": c1["travel_time_min"], "visit_min": visit1},
-                    {**c2, "label": interest2.get("label", "stop 2"),
-                     "leg_travel_min": c2["travel_time_min"], "visit_min": visit2},
-                ],
-                "total_travel_min": total_travel,
-                "total_itinerary_min": total_travel + visit1 + visit2,
-            })
+    plans = [{
+        "stops": p["stops"],
+        "total_travel_min": p["total_travel_min"],
+        "total_itinerary_min": p["total_travel_min"] + p["total_visit_min"],
+    } for p in beam if len(p["stops"]) == len(interests)]  # only full-length plans
 
     plans.sort(key=lambda p: p["total_itinerary_min"])
     return plans[:top_plans]
