@@ -128,8 +128,7 @@ viennakg:hasCategory a owl:ObjectProperty ;
     rdfs:range skos:Concept ;
     rdfs:comment "Links a POI to its category/subcategory in the SKOS taxonomy below." .
 
-# Reused object properties (schema.org, W3C Geo) — declared here for
-# documentation purposes; not redefining their upstream semantics.
+# Reused object properties (schema.org, W3C Geo)
 schema:containedInPlace rdfs:comment "Reused as-is: POI/Stop -> viennakg:District."@en .
 schema:amenityFeature rdfs:comment "Reused as-is: POI -> schema:LocationFeatureSpecification. Covers both Park Ja/Nein amenities and Playground equipment items."@en .
 
@@ -179,8 +178,7 @@ viennakg:categoryScheme a skos:ConceptScheme ;
 
 # Populated from the Wien Tourismus CATEGORY_NAME / SUBCATEGORY_NAME split —
 # the only source file with an explicit two-level taxonomy. The other 6 POI
-# types are each their own top-level category by construction (their rdf:type
-# already says what they are).
+# types are each their own top-level category (their rdf:typen already says what they are).
 
 viennakg:cat_Sightseeing a skos:Concept ;
     skos:inScheme viennakg:categoryScheme ;
