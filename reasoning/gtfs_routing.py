@@ -1,21 +1,15 @@
 """
-Direct-connection travel-time estimation using Wiener Linien's GTFS feed.
+Travel-time estimation using Wiener Linien's GTFS feed, up to 2 transfers
+(see docs/reasoning_layer_decisions.md for why direct-only wasn't enough).
 
-Implements the scoping decision in docs/reasoning_layer_decisions.md:
-- GTFS-based, direct (no-transfer) connections only -- not full multi-transfer
-  routing.
-- GTFS stays tabular (pandas), never modelled as RDF triples -- stop_times.txt
-  alone is 7.1M rows for the full year.
-- No formal RDF-level link between GTFS stops and viennakg:Stop/Platform.
-  Both are joined to a query point by coordinates independently: GTFS stops
-  for travel-time computation, viennakg:Stop (with its RBL) for live
-  departure/disruption lookups later. They resolve to the same physical
-  places in practice without needing an explicit sameAs-style triple.
+GTFS stays tabular (pandas), never modelled as RDF triples: stop_times.txt
+alone is 7.1M rows for the full year. No formal RDF link between GTFS stops
+and viennakg:Stop/Platform either, both resolve to the same physical places
+by coordinates, no sameAs triple needed.
 
-The 7.1M-row stop_times.txt is pre-filtered down to one representative
-service day (Wiener Linien trips only) via `preprocess_day()`, producing the
-much smaller data/processed/gtfs_wl_<date>_stop_times.csv /
-_trips.csv this module actually queries. Re-run preprocessing to switch days.
+The full stop_times.txt is pre-filtered to one representative service day
+via preprocess_day(), producing the smaller data/processed/gtfs_wl_<date>_*
+files this module actually queries. Re-run to switch days.
 
 Usage:
     from reasoning.gtfs_routing import GtfsRouter
@@ -32,8 +26,8 @@ ROOT = Path(__file__).resolve().parents[1]
 RAW_GTFS = ROOT / "data" / "raw" / "gtfs"
 PROCESSED = ROOT / "data" / "processed"
 
-WALKING_SPEED_MPS = 1.4  # ~5 km/h, standard trip-planner default
-MAX_WALK_TO_STOP_M = 1500  # beyond this a "nearest stop" isn't realistic
+WALKING_SPEED_MPS = 1.4     # ~5 km/h, seems reasonable enough
+MAX_WALK_TO_STOP_M = 1500   # beyond this one cannot call it a "nearest stop" anymore
 
 
 # --------------------------------------------------------------------------
@@ -155,10 +149,8 @@ class GtfsRouter:
         self._stop_name = dict(zip(self.stops["stop_id"], self.stops["stop_name"]))
 
     def nearest_stop(self, lon: float, lat: float) -> dict:
-        """Vectorized haversine over all stops -- matters here since this gets
-        called twice per estimate_travel_time() and the notebook calls that
-        in a loop; the naive .apply() version was slow enough to time out a
-        modest batch search."""
+        """Vectorized haversine over all stops, much faster than .apply().
+        Matters since this runs on every estimate_travel_time() call."""
         import numpy as np
         lons = self.stops["stop_lon"].to_numpy()
         lats = self.stops["stop_lat"].to_numpy()
@@ -175,21 +167,15 @@ class GtfsRouter:
 
     def _nearby_stops(self, lon: float, lat: float, max_walk_m: float = MAX_WALK_TO_STOP_M,
                        strict: bool = False) -> list:
-        """All stops within walking distance, not just the single nearest one.
-        Matters because a single 'nearest stop' can land on a specific
-        platform that happens to be poorly connected for *boarding* (e.g. near
-        the END of most trip patterns -- an alighting-heavy platform) even
-        when a slightly farther platform at the same named stop is a much
-        better boarding point. Returns [(stop_id, walk_seconds), ...].
+        """All stops within walking distance, not just the nearest one. A
+        single nearest platform can be badly connected for boarding (e.g.
+        near the end of most trip patterns) even when a slightly farther one
+        boards well. Returns [(stop_id, walk_seconds), ...].
 
-        `strict=False` (default): if nothing is within max_walk_m, falls back
-        to the single nearest stop anyway -- avoids ordinary queries coming
-        back empty just because the default radius happened to be a little
-        too small somewhere sparse.
-        `strict=True`: no fallback -- returns [] if nothing qualifies. Used
-        when the caller has stated a real constraint (e.g. a mobility-limited
-        max walk time) that must not be silently violated by walking someone
-        farther than they said they could."""
+        strict=False (default): falls back to the nearest stop if none are
+        within max_walk_m. strict=True: returns [] instead, used when
+        max_walk_min is a real constraint that must not get silently
+        violated."""
         import numpy as np
         lons = self.stops["stop_lon"].to_numpy()
         lats = self.stops["stop_lat"].to_numpy()
@@ -210,31 +196,20 @@ class GtfsRouter:
 
     def _reachable_stops(self, origin_frontier: dict, max_transfers: int = 2,
                           transfer_buffer_s: int = 180) -> dict:
-        """Round-based (RAPTOR-lite) reachability search from a SET of origin
-        stops (not just one), each with its own "available to board" time --
-        typically every stop within walking distance of a real-world
-        coordinate, via _nearby_stops(), each offset by its own walk time.
-        Using multiple origin platforms rather than a single 'nearest stop'
-        matters: a single nearest platform can be an unlucky pick (e.g. an
-        alighting-heavy platform near the end of most trip patterns) even
-        when a slightly farther platform at the same named stop boards well.
+        """Round-based (RAPTOR-lite) reachability search from a set of origin
+        stops, each with its own boarding time. Normally every stop within
+        walking distance of a coordinate, via _nearby_stops(). Multiple
+        origin platforms avoids picking one unlucky nearest platform.
 
-        Round 0 finds every stop reachable with zero transfers from ANY origin
-        stop (this generalizes what direct_trips() checks pairwise -- here for
-        all destinations from a whole origin area at once, the natural shape
-        for a many-destination search like preference_filter's), round 1 adds
-        stops reachable with one transfer (boarding again, after a flat
-        `transfer_buffer_s`, from anywhere round 0 reached), round 2 adds a
-        second transfer. A later round only overwrites a stop's entry if it
-        gets there STRICTLY EARLIER -- so a fast direct (round-0) connection
-        is never displaced by a slower multi-transfer one; it just doesn't get
-        re-found in a later round, and the round-0 answer stands as recorded.
+        Round 0 = zero transfers, round 1 = one transfer (boarding again
+        after transfer_buffer_s), round 2 = two. A later round only
+        overwrites a stop if it arrives strictly earlier, so a fast direct
+        connection is never displaced by a slower one.
 
         Returns {stop_id: {"arrival_s", "transfers", "trip_id", "board_stop",
-        "board_time_s"}}. `board_stop`/`trip_id` let a caller reconstruct the
-        journey leg by leg by following board_stop back towards the origin.
-        Vectorized (pandas merges), not a per-stop Python loop -- needed at
-        this graph's scale (390K stop_times rows/day, 4.3K stops)."""
+        "board_time_s"}}; board_stop lets a caller reconstruct the journey
+        leg by leg. Vectorized via pandas merges, not a per-stop loop, needed
+        at this scale (390K stop_times rows/day, 4.3K stops)."""
         st = self.stop_times
         best = {sid: {"arrival_s": t, "transfers": 0, "trip_id": None,
                        "board_stop": None, "board_time_s": None}
@@ -251,8 +226,8 @@ class GtfsRouter:
             board = board[board["dep_s"] >= board["avail_s"]]
             if board.empty:
                 break
-            # earliest boardable departure per (frontier stop, trip) -- catching
-            # a later run of the same trip from the same stop is never useful
+            # earliest boardable departure per (stop, trip): a later run of
+            # the same trip from the same stop is never useful
             board = board.sort_values("dep_s").drop_duplicates(subset=["stop_id", "trip_id"], keep="first")
             board = board.rename(columns={"stop_id": "board_stop", "stop_sequence": "board_seq",
                                            "dep_s": "board_dep_s"})[["trip_id", "board_stop", "board_seq",
@@ -265,14 +240,9 @@ class GtfsRouter:
             if merged.empty:
                 break
 
-            # best (earliest) arrival per destination stop this round; ties on
-            # arrival time (common -- a frequent line can have multiple
-            # platforms/trips landing on the exact same downstream arrival)
-            # are broken by preferring the boarding option that was reachable
-            # EARLIEST at its origin (smallest avail_s -- for round 0 this
-            # means shortest walk; for later rounds, least idle transfer
-            # time). Without this, an arbitrary row-order pick could surface a
-            # 17-minute walk over a 2-minute one for an identical total time.
+            # best arrival per destination this round; ties broken by
+            # shortest walk/idle time (avail_s), not arrival order, otherwise
+            # a 17-minute walk could beat a 2-minute one for the same arrival
             merged = merged.sort_values(["arr_s", "avail_s"], ascending=[True, True])
             merged = merged.drop_duplicates(subset=["dest_stop"], keep="first")
 
@@ -288,10 +258,9 @@ class GtfsRouter:
         return best
 
     def _reconstruct_legs(self, best: dict, dest_stop_id: str) -> list:
-        """Walk backward from the destination via each stop's recorded
-        board_stop until reaching an origin stop (trip_id is None there),
-        turning the flat `best` reachability dict into an ordered list of
-        journey legs."""
+        """Walks backward from the destination via each stop's recorded
+        board_stop to an origin stop (trip_id is None there), turning the
+        flat `best` dict into an ordered list of journey legs."""
         legs = []
         cur = dest_stop_id
         while best[cur]["trip_id"] is not None:
@@ -311,8 +280,8 @@ class GtfsRouter:
 
     def direct_trips(self, origin_stop_id: str, dest_stop_id: str) -> pd.DataFrame:
         """All same-trip, same-direction connections between two stops on the
-        preprocessed day -- the 'direct connection only' constraint lives here:
-        no join across different trip_ids is attempted."""
+        preprocessed day. No join across different trip_ids: that's the
+        'direct connection' constraint."""
         o = self._by_stop.get(origin_stop_id)
         d = self._by_stop.get(dest_stop_id)
         if o is None or d is None:
@@ -333,20 +302,16 @@ class GtfsRouter:
     def reachable_from(self, origin_lon, origin_lat, depart_after: str = "12:00:00",
                         max_transfers: int = 2, transfer_buffer_s: int = 180,
                         max_walk_min: float = None) -> dict:
-        """The expensive part of routing (the round-based search over the
-        whole network) done ONCE for a given origin+time. Returns an opaque
-        bundle to pass into travel_time_to() for fast, cheap per-destination
-        lookups -- the right shape for checking many candidate destinations
-        from one origin (e.g. preference_filter.find_pois() ranking a whole
-        category of POIs), instead of paying the full search cost again for
-        every candidate the way calling estimate_travel_time() in a loop
-        would.
+        """The expensive part (the round-based search over the whole
+        network) done ONCE per origin+time. Returns a bundle for
+        travel_time_to() to do fast per-destination lookups against, instead
+        of paying the full search cost again for every candidate the way
+        calling estimate_travel_time() in a loop would.
 
-        max_walk_min: if given, a hard cap on how far someone can walk to
-        reach a boarding stop (e.g. 10 for a stroller/mobility constraint) --
-        no fallback to a farther stop if nothing qualifies (see
-        _nearby_stops(strict=...)). If None, uses the generous
-        MAX_WALK_TO_STOP_M default with its normal fallback behavior."""
+        max_walk_min: hard cap on walking to a boarding stop (e.g. 10 for a
+        stroller/mobility constraint), no fallback if nothing qualifies. None
+        uses the generous MAX_WALK_TO_STOP_M default with its usual
+        fallback."""
         depart_s = parse_gtfs_time(depart_after)
         max_walk_m = max_walk_min * 60 * WALKING_SPEED_MPS if max_walk_min is not None else MAX_WALK_TO_STOP_M
         origin_candidates = self._nearby_stops(origin_lon, origin_lat, max_walk_m=max_walk_m,
@@ -358,15 +323,13 @@ class GtfsRouter:
                 "max_walk_min": max_walk_min}
 
     def travel_time_to(self, reachability: dict, dest_lon, dest_lat, max_walk_min: float = None) -> dict:
-        """Fast per-destination lookup against a bundle from reachable_from().
-        Considers every stop within walking distance of the destination (see
-        _nearby_stops), not just the single nearest one, same reasoning as
-        reachable_from() does on the origin side.
+        """Fast per-destination lookup against a reachable_from() bundle.
+        Considers every stop within walking distance of the destination,
+        same as the origin side.
 
-        max_walk_min: caps the FINAL walk from the last transit stop to the
-        destination. Defaults to whatever was passed to the reachable_from()
-        call this bundle came from, so a single max_walk_min setting applies
-        consistently to both ends of the trip unless overridden here."""
+        max_walk_min caps the final walk from stop to destination, defaults
+        to whatever reachable_from() used, so one setting applies to both
+        ends unless overridden here."""
         best = reachability["best"]
         depart_s = reachability["depart_s"]
         effective_max_walk_min = max_walk_min if max_walk_min is not None else reachability.get("max_walk_min")
@@ -410,29 +373,23 @@ class GtfsRouter:
     def estimate_travel_time(self, origin_lon, origin_lat, dest_lon, dest_lat,
                               depart_after: str = "12:00:00", max_transfers: int = 2,
                               transfer_buffer_s: int = 180, max_walk_min: float = None) -> dict:
-        """One-off origin-to-destination estimate: walk to any GTFS stop
-        within walking distance -> up to `max_transfers` transit legs
-        (round-based search, see _reachable_stops) -> walk from whichever
-        nearby stop was actually reached to the destination. For checking
-        many destinations from the SAME origin (e.g. ranking a whole POI
-        category), use reachable_from() once + travel_time_to() per candidate
-        instead -- this function pays the full network search cost every call.
+        """One-off origin-to-destination estimate: walk to a stop, up to
+        max_transfers transit legs, walk to the destination. For many
+        destinations from the same origin, use reachable_from() once +
+        travel_time_to() per candidate instead, this pays the full network
+        search cost every call.
 
-        max_walk_min: hard cap on walking time at EACH end (e.g. 10 for a
-        stroller/mobility constraint) -- see reachable_from()/travel_time_to()
-        docstrings. None (default) uses the generous MAX_WALK_TO_STOP_M
-        default with its normal fallback behavior.
+        max_walk_min: hard cap on walking at each end (e.g. 10 for a
+        stroller/mobility constraint). None (default) uses the generous
+        MAX_WALK_TO_STOP_M default with its usual fallback.
 
-        Direct (0-transfer) connections are never excluded: they're found in
-        round 0 of the same search that finds 1- and 2-transfer options, and
-        only ever get displaced by a later round if that round reaches the
-        SAME destination platform strictly faster -- a slower multi-transfer
-        route can never crowd out a faster direct one.
+        Direct connections are never excluded: found in round 0, only ever
+        displaced by a later round if it reaches the same stop strictly
+        faster.
 
-        Returns a dict with a leg-by-leg breakdown, or a clear
-        found_direct_connection=False result if nothing at all connects the
-        two areas within `max_transfers` on this service day (which, with a
-        tight max_walk_min, may simply mean nothing was walkable at one end)."""
+        Returns a leg-by-leg breakdown, or found_direct_connection=False if
+        nothing connects within max_transfers on this service day (with a
+        tight max_walk_min, that can simply mean nothing was walkable)."""
         reachability = self.reachable_from(origin_lon, origin_lat, depart_after,
                                             max_transfers, transfer_buffer_s, max_walk_min)
         result = self.travel_time_to(reachability, dest_lon, dest_lat, max_walk_min)
