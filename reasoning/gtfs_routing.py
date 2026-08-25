@@ -196,10 +196,19 @@ class GtfsRouter:
 
     def _reachable_stops(self, origin_frontier: dict, max_transfers: int = 2,
                           transfer_buffer_s: int = 180) -> dict:
-        """Round-based (RAPTOR-lite) reachability search from a set of origin
-        stops, each with its own boarding time. Normally every stop within
-        walking distance of a coordinate, via _nearby_stops(). Multiple
-        origin platforms avoids picking one unlucky nearest platform.
+        """
+        https://www.audentia-gestion.fr/MICROSOFT/raptor_alenex.pdf
+        Round-based ("RAPTOR-lite", but not really) reachability search 
+        from a set of origin stops, each with its own boarding time. 
+        Normally every stop within walking distance of a coordinate, 
+        via _nearby_stops(). Multiple origin platforms avoids picking
+        one unlucky nearest platform as we had in one of the early
+        implementations.
+        TODO:
+        Worth saying that we e.g. do not consider walking time
+        between stops for transfers, only the transfer_buffer_s. This is
+        a simplification that we can change later if it turns out to be a 
+        problem in practice.
 
         Round 0 = zero transfers, round 1 = one transfer (boarding again
         after transfer_buffer_s), round 2 = two. A later round only

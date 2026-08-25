@@ -1,41 +1,27 @@
 """
 Preference + travel-time filtering: "find me a <category>, with <amenities>,
-in <district>, ranked by how fast I can actually get there from here."
+in <district>, ranked by how fast I can actually get there."
 
-Combines three things built separately so far:
-- the KG's category (rdf:type) + schema:amenityFeature data (KG Modelling/Creation)
-- the KG's schema:containedInPlace -> viennakg:District links (KG Modelling)
-- reasoning.gtfs_routing.GtfsRouter's travel time, up to 2 transfers (Reasoning Layer)
+Combines the KG's category/amenity/district data (KG Modelling) with
+GtfsRouter's travel time, up to 2 transfers (Reasoning Layer).
 
-Design notes (see docs/reasoning_layer_decisions.md for the broader context):
-- POI class filtering uses an explicit list of the 7 known POI classes rather
-  than querying the common viennakg:POI supertype generically. Tried RDFS
-  materialization via owlrl to make the supertype queryable directly -- on
-  this graph (80K+ triples) a full RDFS closure pass didn't finish in a
-  reasonable time, so it's not worth it just to avoid listing 7 class names
-  that are already fixed and known.
-- POIs without a direct transit connection are NOT dropped from results --
-  only excluded if the caller sets a hard max_travel_time_min. Otherwise
-  they're returned, sorted after all reachable ones, clearly marked. Silently
-  hiding them would make preference queries look broken given how rare direct
-  connections are (see notebooks/04_reasoning_travel_time.ipynb).
-- District filtering (`district=` on find_pois) matches on
-  schema:containedInPlace, which every POI already has from KG Modelling --
-  no new ingestion needed, just a new query parameter. Applied as an early
-  candidate-set filter (before travel-time computation), not a post-filter,
-  so it also narrows the routing workload. Accepts a district number (1-23),
-  a "BezirkN" URI-local-name string, or a case-insensitive substring of the
-  district's rdfs:label (e.g. 6, "Bezirk6", or "mariahilf" all resolve to the
-  6th district). Unresolvable input raises ValueError rather than silently
-  matching nothing, since a typo'd district name silently returning zero
-  results is a confusing failure mode.
-- There's no free-text description field anywhere in the KG (checked: no
-  schema:description triples exist at all). describe_poi() composes a
-  human-readable summary from whatever structured fields a given POI
-  actually has (address, url, contact info, opening hours, area, amenities,
-  tourist-attraction subcategory) -- fields vary by POI class and source, so
-  the description is best-effort, not guaranteed complete. Only computed for
-  final top_n results, not every candidate, to keep find_pois() cheap.
+Design notes (see docs/reasoning_layer_decisions.md):
+- POI classes are an hardcoded list of the 7 known/chosen ones, not a 
+  viennakg:POI supertype query. RDFS materialization via owlrl was tried to
+  make the supertype queryable but didn't finish in reasonable time on this
+  graph (80K+ triples) on my machine; not worth it just to avoid listing 7 fixed names
+  (for now; #TODO). Unlike the District class, POI has subclasses, so this needs just
+  takes too long to materialize.
+- Unreachable POIs aren't dropped, only excluded if max_travel_time_min is
+  set. Otherwise sorted last and clearly marked; hiding them would make
+  queries look broken given how rare direct connections are.
+- District filtering matches schema:containedInPlace, already on every POI.
+  Applied before travel-time computation, so it also narrows the routing
+  workload. Accepts a number (1-23), "BezirkN", or a label substring;
+  unresolvable input raises rather than matching nothing.
+- No free-text description exists anywhere in the KG (for now). 
+  describe_poi() is made to assemble a "best-effort description" 
+  from whatever structured fields we have available at this stage.
 """
 
 import sys
@@ -67,9 +53,8 @@ PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
 
 
 def list_districts(g: Graph):
-    """All 23 districts as [{"number": 1, "label": "1. Innere Stadt", "uri": "..."}],
-    sorted by number. For populating a district dropdown/filter UI -- see
-    notebooks/06_service_layer.ipynb section on district filtering."""
+    """All 23 districts as {"number", "label", "uri"} dicts, sorted by
+    number. Used for district dropdown/filter UIs."""
     q = f"""{PREFIXES}
     SELECT ?d ?label WHERE {{
         ?d a viennakg:District ; rdfs:label ?label .
@@ -83,9 +68,9 @@ def list_districts(g: Graph):
 
 
 def resolve_district(g: Graph, district) -> str:
-    """District number (1-23), "BezirkN", or a case-insensitive substring of
-    the district's rdfs:label -> district URI (str). Raises ValueError if no
-    district matches, rather than silently filtering to nothing."""
+    """District number (1-23), "BezirkN", or a label substring -> district
+    URI. Raises ValueError if nothing matches, rather than silently
+    filtering to nothing."""
     districts = list_districts(g)
     if isinstance(district, int) or (isinstance(district, str) and district.strip().isdigit()):
         number = int(district)
@@ -106,11 +91,10 @@ def resolve_district(g: Graph, district) -> str:
 
 
 def _pois_of_class(g: Graph, class_qname: str):
-    """POIs of one class -> {uri: (name, lon, lat, district_uri)}. Kept as a
-    single simple triple pattern per class deliberately -- see the note
-    below in _candidate_pois. containedInPlace is OPTIONAL since it's a
-    simple non-string-filtered join and doesn't trigger the query-planner
-    pathology that motivated splitting out the amenity lookup."""
+    """POIs of one class -> {uri: (name, lon, lat, district_uri)}. One
+    simple triple pattern per class, see _candidate_pois for why.
+    containedInPlace is OPTIONAL since it's a plain join, not the
+    string-filtered kind that causes the query-planner issue below."""
     q = f"""{PREFIXES}
     SELECT ?poi ?name ?lon ?lat ?district WHERE {{
         ?poi a {class_qname} ; schema:name ?name ; geo:long ?lon ; geo:lat ?lat .
@@ -135,24 +119,20 @@ def _pois_with_amenity(g: Graph, amenity_substring: str):
 
 
 def _candidate_pois(g: Graph, poi_classes=None, required_amenities=None, district_uri=None):
-    """POIs of the requested class(es) with all required amenities present,
+    """POIs of the requested class(es) with all required amenities,
     optionally restricted to one district.
 
-    Deliberately NOT one SPARQL query joining class-match and amenity-match
-    patterns together: that triggers a severe rdflib query-planning
-    pathology on this graph (a query combining `?poi a ?type` with an
-    amenityFeature join and a CONTAINS/LCASE filter took >35s and was killed;
-    the same two patterns run as separate queries take ~0.15s and ~0.25s).
-    Root cause not fully diagnosed -- rdflib's SPARQL optimizer likely
-    mishandles the join ordering with the string filter present -- so the
-    fix is to run each lookup as its own simple query and intersect the
-    resulting URI sets in Python, which is both fast and easy to reason
-    about. Returns (uri, name, class_label, lon, lat, district_uri) tuples.
+    Not one SPARQL query joining class-match and amenity-match: that
+    triggers a severe rdflib query-planning issue on this graph (a query
+    combining `?poi a ?type` with an amenityFeature join and a CONTAINS/
+    LCASE filter took >35s; the same two patterns as separate queries take
+    ~0.15s and ~0.25s combined). Root cause not fully diagnosed, likely a
+    join-ordering issue with the string filter present. Fix: run each
+    lookup separately, intersect the URI sets in Python. Returns
+    (uri, name, class_label, lon, lat, district_uri) tuples.
 
-    district_uri filtering happens here, in Python, alongside the amenity
-    intersection -- before any travel-time computation -- so an over-narrow
-    district also shrinks the routing workload downstream, not just the
-    final display list."""
+    district_uri filtering happens here, before travel-time computation, so
+    it also shrinks the routing workload downstream."""
     classes = poi_classes or list(CLASS_MAP.keys())
     unknown = set(classes) - set(CLASS_MAP)
     if unknown:
@@ -174,11 +154,10 @@ def _candidate_pois(g: Graph, poi_classes=None, required_amenities=None, distric
 
 
 def describe_poi(g: Graph, poi_uri: str) -> str:
-    """Best-effort human-readable description composed from whatever
-    structured fields this POI actually has in the KG -- there is no
-    free-text description field in the data (see module docstring), so this
-    is assembled from address/url/contact/opening-hours/area/amenities/
-    tourist-attraction-subcategory, whichever are present. Returns "" if
+    """Best-effort description composed from whatever structured fields a
+    POI has. No free-text description exists in the KG (see module
+    docstring), so this assembles one from address/url/contact/opening-
+    hours/area/amenities/subcategory, whichever are present. Returns "" if
     nothing beyond name/location is known (common for e.g. BathingSite)."""
     q = f"""{PREFIXES}
     SELECT ?address ?url ?telephone ?email ?openingHours ?areaSqm ?catLabel ?districtLabel WHERE {{
@@ -229,31 +208,25 @@ def find_pois(g: Graph, router: GtfsRouter, origin_lon: float, origin_lat: float
               max_travel_time_min=None, depart_after="14:00:00", max_transfers=2,
               max_walk_min=None, top_n=10, with_description=True):
     """Preference-matching POIs near (origin_lon, origin_lat), ranked by
-    real transit travel time (not distance, and -- since GtfsRouter now
-    supports it -- not limited to direct connections either; up to
-    `max_transfers` transfers are considered). POIs with no connection at all
-    within `max_transfers` are still included (sorted last) unless
+    real transit travel time (not distance), up to max_transfers transfers.
+    POIs with no connection at all are still included (sorted last) unless
     max_travel_time_min excludes them.
 
-    district: optional filter restricting candidates to one Vienna district
-    -- accepts a number (1-23), "BezirkN", or a substring of the district's
-    label (see resolve_district()). None (default) searches all districts.
+    district: optional filter to one Vienna district, accepts a number
+    (1-23), "BezirkN", or a label substring (see resolve_district()). None
+    searches all districts.
 
-    max_walk_min: hard cap on walking time to/from a transit stop at both
-    ends (e.g. 10 for a stroller/mobility constraint) -- see
-    GtfsRouter.reachable_from()/travel_time_to() docstrings for the strict-
-    vs-fallback behavior this triggers. None (default) leaves walking
-    unrestricted (beyond the generous built-in default).
+    max_walk_min: hard cap on walking time at both ends (e.g. 10 for a
+    stroller/mobility constraint). None leaves walking unrestricted.
 
-    with_description: if True (default), attaches a best-effort "description"
-    string (see describe_poi()) to each of the final top_n results. Computed
-    only for the results actually returned, not every candidate, so it's
-    cheap even for large candidate pools; set False to skip entirely.
+    with_description: attaches a best-effort description (see
+    describe_poi()) to each of the final top_n results, only for what's
+    returned, so it stays cheap. Set False to skip.
 
-    Uses router.reachable_from() ONCE for this origin, then router
-    .travel_time_to() per candidate -- not router.estimate_travel_time() in a
-    loop, which would redo the full network search per candidate. For 1,000+
-    candidates that's the difference between ~3s and several minutes."""
+    Uses router.reachable_from() once for this origin, then travel_time_to()
+    per candidate, not estimate_travel_time() in a loop, which would redo
+    the full network search per candidate. For 1,000+ candidates that's the
+    difference between ~3s and several minutes."""
     district_uri = resolve_district(g, district) if district is not None else None
     candidates = _candidate_pois(g, poi_classes, required_amenities, district_uri)
     reachability = router.reachable_from(origin_lon, origin_lat, depart_after, max_transfers,
