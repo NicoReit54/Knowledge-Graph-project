@@ -18,7 +18,7 @@
     dcterms:license "Source data CC BY (Wiener Linien, Stadt Wien)"@en .
 
 #################################################################
-# Classes — POI hierarchy
+# Classes - POI hierarchy
 #################################################################
 
 viennakg:POI a owl:Class ;
@@ -37,7 +37,7 @@ schema:Library a owl:Class ;
 viennakg:BathingSite a owl:Class ;
     rdfs:subClassOf viennakg:POI ;
     rdfs:label "Bathing site"@en ;
-    rdfs:comment "Custom class — not all Vienna Badestellen are conventional beaches, so schema:Beach wasn't forced. Source: BADESTELLENOGD.csv." .
+    rdfs:comment "Custom class - not all Vienna Badestellen are conventional beaches, so schema:Beach wasn't forced. Source: BADESTELLENOGD.csv." .
 
 schema:Park a owl:Class ;
     rdfs:subClassOf viennakg:POI ;
@@ -46,7 +46,7 @@ schema:Park a owl:Class ;
 viennakg:SwimmingPool a owl:Class ;
     rdfs:subClassOf viennakg:POI ;
     rdfs:label "Swimming pool"@en ;
-    rdfs:comment "Custom class — no clean schema.org equivalent for a public pool facility. Source: SCHWIMMBADOGD.csv." .
+    rdfs:comment "Custom class - no clean schema.org equivalent for a public pool facility. Source: SCHWIMMBADOGD.csv." .
 
 viennakg:PlaygroundArea a owl:Class ;
     rdfs:subClassOf viennakg:POI ;
@@ -58,7 +58,7 @@ schema:TouristAttraction a owl:Class ;
     rdfs:comment "Reused schema.org type. Source: WIENTOURISMUS_sights_clean.csv (Sehenswürdigkeit + Schloss & Palais subcategories only)." .
 
 #################################################################
-# Classes — Transport
+# Classes - Transport
 #################################################################
 
 viennakg:Stop a owl:Class ;
@@ -74,7 +74,7 @@ viennakg:Line a owl:Class ;
     rdfs:comment "A transit route/service (not itself a Place). Source: wienerlinien-ogd-linien.csv." .
 
 #################################################################
-# Classes — Spatial
+# Classes - Spatial
 #################################################################
 
 viennakg:District a owl:Class ;
@@ -82,12 +82,12 @@ viennakg:District a owl:Class ;
     rdfs:comment "Vienna's 23 Bezirke, promoted from a raw integer attribute to a first-class entity so district-level queries/reasoning have something to operate over. 23 named individuals defined below." .
 
 #################################################################
-# Classes — Live / temporal
+# Classes - Live / temporal
 #################################################################
 
 viennakg:Departure a owl:Class ;
     rdfs:label "Departure"@en ;
-    rdfs:comment "One scheduled/real-time departure at a Platform, from the Wiener Linien monitor API (not yet ingested — Reasoning/Service Layer concern)." .
+    rdfs:comment "One scheduled/real-time departure at a Platform, from the Wiener Linien monitor API (not yet ingested - Reasoning/Service Layer concern)." .
 
 viennakg:Disruption a owl:Class ;
     rdfs:label "Disruption"@en ;
@@ -144,7 +144,7 @@ viennakg:areaSqm a owl:DatatypeProperty ;
 viennakg:rbl a owl:DatatypeProperty ;
     rdfs:domain viennakg:Platform ;
     rdfs:range xsd:integer ;
-    rdfs:comment "RBL_NUMMER — the key used by the Wiener Linien monitor API." .
+    rdfs:comment "RBL_NUMMER - the key used by the Wiener Linien monitor API." .
 
 viennakg:mode a owl:DatatypeProperty ;
     rdfs:domain viennakg:Line ;
@@ -168,6 +168,15 @@ viennakg:validFrom a owl:DatatypeProperty ;
 viennakg:validTo a owl:DatatypeProperty ;
     rdfs:domain viennakg:Disruption ;
     rdfs:range xsd:dateTime .
+
+#################################################################
+# KG Evolution: rule-inferred tags
+#################################################################
+
+viennakg:inferredTag a owl:DatatypeProperty ;
+    rdfs:domain viennakg:POI ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Added by kg/enrichment/infer_tags.py via rule-based KG completion (e.g. combining amenity flags, area, category, ...),. Essentially a separate property from schema:amenityFeature so that inferred facts stay distinguishable from sourced ones." .
 
 #################################################################
 # SKOS category taxonomy

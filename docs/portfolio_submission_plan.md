@@ -1,0 +1,139 @@
+# Portfolio submission plan
+
+Gap analysis of `KG - Portfolio - Pro-Forma-v3.docx` (the official submission
+template) against what exists now and what the one-pager committed to.
+Written 2026-08-25 so the next session can start directly on the actual
+graded deliverable instead of continuing to extend the technical project
+indefinitely. **Start here next time.**
+
+## The biggest finding: the portfolio is a single written report, not a repo
+
+Everything built so far (README, the four `docs/*_decisions.md` logs, the
+notebooks) is real, usable material, but none of it is currently assembled
+into what actually gets graded. The template's structure is:
+
+1. A cover page: title, name, ECTS mode (checkbox).
+2. One table per LO1-12, each with a checkbox ("I showed basic proficiency"
+   / "exceeded basic proficiency"), a 1-2 sentence justification, and a
+   **page number reference into the portfolio**. This means the report has
+   to exist and be paginated (a PDF or Word doc, not a folder of notebooks)
+   before this table can even be filled in.
+3. A declaration section on generative AI use (see below, this is its own
+   real gap).
+4. Then the actual report body, "structured as you wish" (the template
+   suggests but does not require Introduction/Background/Method/Results/
+   Conclusion), with **inline `(LOx)` citations** wherever a specific
+   learning outcome is being discussed, especially ones referenced on the
+   cover page. None of the current docs use this citation convention.
+
+So the concrete next-session task isn't "extend the KG further", it's:
+turn the existing decisions logs, notebook findings, and design rationale
+into one coherent written report with page numbers and LO citations. The
+technical project is in very good shape for this (arguably over-built
+relative to what's needed); the writing-it-up step hasn't started.
+
+## LO-by-LO: what the cover table would currently say
+
+Cross-checked against the one-pager's own commitments (focus: LO5, LO6,
+LO7, LO9, LO11; basic proficiency: LO2, LO3, LO4, LO8, LO12; excluded: LO1,
+LO10) and the fuller review done earlier this session (see chat history,
+2026-08-25, "which LOs have we fulfilled" question, grounded against the
+actual course LO definitions at kg.dbai.tuwien.ac.at).
+
+**Focus LOs, template asks for these to justify "exceeded basic
+proficiency" ideally, since that's what was committed to:**
+- LO5 (architectures): strong evidence exists (in-memory rdflib vs. triple
+  store tradeoff, GTFS-stays-tabular decision). Writing-up task only.
+- LO6 (scalable reasoning): real evidence (bounded 2-transfer search, beam
+  search, the rdflib query-planning workaround), but worth being honest in
+  the writeup that it's SPARQL + custom algorithms, not KG-embedding or
+  recursive-logic reasoning, the course's own centering examples for this
+  LO. Frame deliberately rather than overclaim.
+- LO7 (create a KG): strong, direct match (`build_kg.py`, 7-source schema
+  mapping, dedup decisions). Writing-up task only.
+- LO9 (real-world applications): strong, the whole project is one. Writing-
+  up task only.
+- LO11 (services through a KG): strong, `plan_activities()` is close to a
+  literal implementation of this LO's description. Writing-up task only.
+
+**Basic-proficiency LOs, mixed, two have real gaps, not just writing-up:**
+- LO2 (logical knowledge): present but thin (TBox + SPARQL, no recursion or
+  existential quantification). Enough for "basic," writing-up task only.
+- LO3 (GNNs): **no work done at all.** Consistently deferred as the lowest-
+  priority stretch goal. This table would currently have nothing to check.
+- LO4 (compare data models): present (RDF-vs-tabular GTFS justification,
+  vocabulary-reuse discussion in `kg_schema_design.md`). Writing-up task.
+- LO8 (evolve a KG): **not really touched.** The pipeline rebuilds from
+  scratch each time rather than demonstrating completion, cleaning, or
+  schema evolution. Real gap, would need actual new work, not just writing.
+- LO12 (KG/ML/AI connections): **not addressed**, but this one is mostly a
+  writing task, not a coding one, it asks for a reflective discussion of
+  how logic-based and ML-based reasoning relate, which can be written
+  directly from what was built (and deliberately not built, e.g. no GNN).
+
+**Excluded (LO1, LO10):** leave their tables blank, consistent with the
+one-pager's declared scope. The template has no explicit "N/A" checkbox, an
+unchecked table should read as "not claimed," matching the exclusion.
+
+**Grading-threshold context** (course page, not authoritative, worth
+confirming against the actual rubric): G4 needs basic proficiency in 6 LOs,
+already comfortably covered (5 focus + LO2 + LO4 = 7). B3 needs 10, which
+specifically requires picking up LO3, LO8, and LO12, the exact three gaps
+above.
+
+## Generative AI disclosure: a real, concrete new obligation
+
+The declaration section requires:
+- A checkbox: "I have marked all parts generated by Generative AI ... and
+  given any prompt I used either in a footnote or in an appendix making
+  clear which parts are generated by which prompts."
+- A stated **percentage** of the mini-project that was AI-generated, plus a
+  description of what parts and what Nico did himself to fulfil the LOs.
+- A **separate** percentage for the portfolio document itself.
+
+This is not optional or low-stakes wording, given this entire project has
+been built through this Claude/Cowork collaboration, it needs a real,
+honest answer, not an afterthought at submission time. Concretely worth
+doing next session, before writing the report itself:
+- Decide how to characterize the split (Nico directed every decision and
+  reviewed/pushed back throughout; Claude wrote the actual code/notebook
+  cells/docs). An honest percentage needs to reflect that Nico steered
+  scope, made the calls on tradeoffs (e.g. the fixed-stop-order beam search
+  decision was Nico's explicit choice among presented options), and caught
+  real bugs/inaccuracies himself (the lon/lat swap bug, questioning whether
+  the RDFS-materialization claim actually held up).
+- Start an actual prompt log/appendix now rather than reconstructing it
+  from memory later. The existing session history has this if exported,
+  but a running record from here on would be much less work at the end.
+
+## Hours disclosure
+
+Two numbers requested (mini-project hours, portfolio-document-prep hours),
+explicitly "HAS NO EFFECT ON MARKING" but still required. Not currently
+tracked anywhere. Simple to fill in honestly at the end, no action needed
+now beyond remembering it exists.
+
+## No page/word limit found in this template
+
+Checked headers, footers, and body text for a length constraint, found
+none in this document. If one exists, it's likely stated elsewhere (course
+announcement, TISS, email from the lecturer), worth double-checking before
+writing, since the writing task's scope depends heavily on this.
+
+## Suggested next-session order
+
+1. Decide the report structure (the template's Introduction/Background/
+   Method/Results/Conclusion suggestion maps cleanly onto this project:
+   Background = one-pager motivation, Method = KG Modelling + Creation +
+   Reasoning Layer design, Results = Service Layer + notebook findings,
+   Conclusion = LO reflection + what's left).
+2. Draft the report body from the existing decisions logs and notebook
+   findings, adding `(LOx)` citations as each topic comes up.
+3. Decide on LO3 and LO8: either do the minimal real work to claim basic
+   proficiency (small GNN exploration; some KG evolution demonstration
+   e.g. a simple completion/cleaning operation), or consciously accept G4-
+   level coverage and skip them.
+4. Fill in the cover page LO table with page references once the report
+   has actual page numbers (i.e., last, after the document is assembled).
+5. Write the generative AI disclosure honestly, ideally from a prompt log
+   kept during the writing process rather than reconstructed after.

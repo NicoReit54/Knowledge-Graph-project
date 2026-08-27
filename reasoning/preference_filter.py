@@ -22,6 +22,9 @@ Design notes (see docs/reasoning_layer_decisions.md):
 - No free-text description exists anywhere in the KG (for now). 
   describe_poi() is made to assemble a "best-effort description" 
   from whatever structured fields we have available at this stage.
+- required_amenities matches both schema:amenityFeature (directly sourced) and
+  viennakg:inferredTag (derived in kg/enrichment/infer_tags.py, so tags like
+  "FamilyFriendly" are usable as a filter as well.
 """
 
 import sys
@@ -118,6 +121,17 @@ def _pois_with_amenity(g: Graph, amenity_substring: str):
     return {str(r.poi) for r in g.query(q)}
 
 
+def _pois_with_inferred_tag(g: Graph, tag_substring: str):
+    """POI URIs with a viennakg:inferredTag containing `tag_substring`
+    -> set of URIs. These are derived facts added in kg/enrichment/infer_tags.py"""
+    q = f"""{PREFIXES}
+    SELECT ?poi WHERE {{
+        ?poi viennakg:inferredTag ?tag .
+        FILTER(CONTAINS(LCASE(STR(?tag)), LCASE("{tag_substring}")))
+    }}"""
+    return {str(r.poi) for r in g.query(q)}
+
+
 def _candidate_pois(g: Graph, poi_classes=None, required_amenities=None, district_uri=None):
     """POIs of the requested class(es) with all required amenities,
     optionally restricted to one district.
@@ -132,7 +146,12 @@ def _candidate_pois(g: Graph, poi_classes=None, required_amenities=None, distric
     (uri, name, class_label, lon, lat, district_uri) tuples.
 
     district_uri filtering happens here, before travel-time computation, so
-    it also shrinks the routing workload downstream."""
+    it also shrinks the routing workload downstream.
+
+    Each entry in required_amenities can match either a schema:amenityFeature
+    (sourced) or a viennakg:inferredTag (rule-derived, see
+    _pois_with_inferred_tag), so "FamilyFriendly" works as a filter exactly
+    like "Playground" does, even though nothing in the raw data says so."""
     classes = poi_classes or list(CLASS_MAP.keys())
     unknown = set(classes) - set(CLASS_MAP)
     if unknown:
@@ -145,7 +164,7 @@ def _candidate_pois(g: Graph, poi_classes=None, required_amenities=None, distric
 
     matched_uris = set(by_class)
     for amenity in required_amenities or []:
-        matched_uris &= _pois_with_amenity(g, amenity)
+        matched_uris &= (_pois_with_amenity(g, amenity) | _pois_with_inferred_tag(g, amenity))
 
     if district_uri is not None:
         matched_uris = {u for u in matched_uris if by_class[u][4] == district_uri}
@@ -199,6 +218,12 @@ def describe_poi(g: Graph, poi_uri: str) -> str:
     amenities = [str(r.fname) for r in g.query(q2) if bool(r.fvalue)]
     if amenities:
         parts.append("amenities: " + ", ".join(sorted(amenities)))
+
+    q3 = f"""{PREFIXES}
+    SELECT ?tag WHERE {{ <{poi_uri}> viennakg:inferredTag ?tag . }}"""
+    tags = sorted(str(r.tag) for r in g.query(q3))
+    if tags:
+        parts.append("tags: " + ", ".join(tags))
 
     return " -- ".join(parts)
 
