@@ -14,25 +14,23 @@ See `docs/One-Pager.pdf` for the full project description and learning outcome s
 ## Status (updated 2026-08-25)
 
 All five pipeline phases from the one-pager have at least a first working version.
-Way ahead of the original 8-week plan (see `TIMELINE.md`).
 
-1. **Data Collection & EDA**: done. 17 City of Vienna POI CSVs profiled, narrowed
+1. **Data Collection & EDA**: 17 City of Vienna POI CSVs profiled, narrowed
    to 7 final sources. Wiener Linien static transit data (stops/platforms/lines)
    downloaded and joined.
-2. **KG Modelling**: done. Ontology at `kg/schema/ontology.ttl`, reusing
-   schema.org/W3C Geo/SKOS. Design + rationale in `docs/kg_schema_design.md`.
-3. **KG Creation**: done. `kg/ingestion/build_kg.py` builds the full KG
-   (80,485 triples) into `kg/vienna_mobility_kg.ttl` in one command.
-4. **Reasoning Layer**: done (first pass). `reasoning/gtfs_routing.py` computes
+2. **KG Modelling**: Ontology at `kg/schema/ontology.ttl`, reusing
+   schema.org/W3C Geo/SKOS.
+3. **KG Creation**:  `kg/ingestion/build_kg.py` builds the full KG
+   (80,485 triples) into `kg/vienna_mobility_kg.ttl`.
+4. **Reasoning Layer**: `reasoning/gtfs_routing.py` computes
    real public-transport travel time (not straight-line distance) using GTFS,
    with up to 2 transfers (extended from an initial direct-only version once
    that turned out to cover under 1% of POI pairs) and a configurable hard
    walking-distance limit (`max_walk_min`, for mobility constraints like a
    stroller). `reasoning/preference_filter.py`'s `find_pois()` combines
-   category/amenity matching with travel-time ranking. See
-   `docs/reasoning_layer_decisions.md`.
-5. **Service Layer**: done (first pass). `service/activity_planner.py`'s
-   `plan_activities()` generates real 1-to-5-stop itineraries (not just single
+   category/amenity matching with travel-time ranking.
+5. **Service Layer**: `service/activity_planner.py`'s
+   `plan_activities()` generates 1-to-5-stop itineraries (not just single
    POI suggestions or bare travel-time chains), visited in the given order and
    found via a bounded beam search (not exhaustive branching, which is
    intractable past ~2 stops, see `docs/service_layer_decisions.md`). Each
@@ -42,21 +40,8 @@ Way ahead of the original 8-week plan (see `TIMELINE.md`).
    folded into the time budget and correctly chained into each leg's
    departure time; the same POI is never suggested twice within one plan.
    `notebooks/06_service_layer.ipynb` has fixed examples plus an interactive
-   ipywidgets form (up to 5 interest slots). See
-   `docs/service_layer_decisions.md`.
+   ipywidgets form (up to 5 interest slots). 
 
-**Not started:** live data (RBL/`monitor` API) wired into reasoning, a return
-trip in itineraries, and GNN exploration (stretch goal, lowest priority). No
-specific next-session request pending, see `docs/service_layer_decisions.md`
-and `TIMELINE.md` for what's naturally next.
-
-## Stack
-
-RDF/SPARQL-based: rdflib (in-memory graph, serialized to Turtle, no external
-triple store needed at this scale, see `docs/kg_modelling_decisions.md`), pandas
-for GTFS/tabular work, matplotlib for visualization, ipywidgets for the Service
-Layer's interactive demo. Dependency management via `uv` (`pyproject.toml` /
-`uv.lock`), not pip/requirements.txt.
 
 ## Structure
 
@@ -95,21 +80,5 @@ Layer's interactive demo. Dependency management via `uv` (`pyproject.toml` /
   per-category visit durations (`DEFAULT_VISIT_MINUTES`), per-stop district
   filtering, and an optional hard `max_walk_min` constraint; `format_plan()`
   for human-readable output
-- `docs/`: key files for orientation:
-  - `One-Pager.pdf`: the original project proposal
-  - `wiener_linien_api_notes.md`: live API + static data notes
-  - `kg_modelling_decisions.md`: scope/cleaning/schema decisions log
-  - `kg_schema_design.md`: full ontology design + per-file mapping table
-  - `reasoning_layer_decisions.md`: routing scope decisions log (direct-only → 2-transfer)
-  - `service_layer_decisions.md`: Service Layer design log
+- `docs/`: key files for orientation and decisions
 
-## Timeline
-
-See `TIMELINE.md`. Hard deadline: 2026-09-30.
-
-## Setup
-
-```bash
-uv sync
-uv run jupyter lab
-```
